@@ -1,7 +1,8 @@
 import uuid
-from sqlalchemy import Column, Integer, ForeignKey
+from sqlalchemy import Column, Integer, ForeignKey, String, Boolean
 from sqlalchemy.dialects.postgresql import UUID
 from app.db.base import Base
+
 
 class Match(Base):
     __tablename__ = "matches"
@@ -15,7 +16,14 @@ class Match(Base):
     )
 
     match_order = Column(Integer, nullable=False)
+
     team1_id = Column(UUID(as_uuid=True), ForeignKey("teams.id"), nullable=True)
     team2_id = Column(UUID(as_uuid=True), ForeignKey("teams.id"), nullable=True)
+
     winner_id = Column(UUID(as_uuid=True), ForeignKey("teams.id"), nullable=True)
+
     court_id = Column(UUID(as_uuid=True), ForeignKey("courts.id"), nullable=True)
+
+    # 🆕 Ticket 11
+    score = Column(String, nullable=True)
+    is_finished = Column(Boolean, default=False)

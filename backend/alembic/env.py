@@ -37,7 +37,8 @@ from app.models import (
     round,
     team,
     tournament, 
-    user    
+    user,
+    scores
 )
 
 target_metadata = Base.metadata
