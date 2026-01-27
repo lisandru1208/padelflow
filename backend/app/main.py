@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from app.routers import health, auth, clubs, courts, tournaments, teams, bracket
+from app.routers import health, auth, clubs, courts, tournaments, teams, brackets
 
 app = FastAPI(title="PadelFlow API")
 
