@@ -152,3 +152,84 @@ def delete_team(
     db.commit()
 
     return {"message": "Team deleted"}
+
+@router.post("/import-csv")
+def import_teams_csv(
+    tournament_id: str,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    check_ja_for_tournament(db, tournament_id, user.id)
+
+    if not file.filename.endswith(".csv"):
+        raise HTTPException(status_code=400, detail="File must be a CSV")
+
+    content = file.file.read().decode("utf-8")
+    reader = csv.DictReader(io.StringIO(content))
+
+    created = 0
+    errors = []
+
+    for i, row in enumerate(reader, start=1):
+        try:
+            # Validation minimale
+            licenses = {
+                row["p1_license"],
+                row["p2_license"]
+            }
+            if len(licenses) != 2:
+                raise ValueError("Duplicate license numbers")
+
+            seed = row.get("team_seed")
+            seed = int(seed) if seed else None
+
+            # Vérifier seed unique
+            if seed is not None:
+                if db.query(Team).filter(
+                    Team.tournament_id == tournament_id,
+                    Team.seed == seed
+                ).first():
+                    raise ValueError(f"Seed {seed} already used")
+
+            team = Team(
+                tournament_id=tournament_id,
+                seed=seed
+            )
+            db.add(team)
+            db.commit()
+            db.refresh(team)
+
+            players = [
+                Player(
+                    team_id=team.id,
+                    first_name=row["p1_first_name"],
+                    last_name=row["p1_last_name"],
+                    license_number=row["p1_license"],
+                    ranking=int(row["p1_ranking"])
+                ),
+                Player(
+                    team_id=team.id,
+                    first_name=row["p2_first_name"],
+                    last_name=row["p2_last_name"],
+                    license_number=row["p2_license"],
+                    ranking=int(row["p2_ranking"])
+                )
+            ]
+
+            for p in players:
+                db.add(p)
+
+            db.commit()
+            created += 1
+
+        except Exception as e:
+            errors.append({
+                "line": i,
+                "error": str(e)
+            })
+
+    return {
+        "created_teams": created,
+        "errors": errors
+    }
