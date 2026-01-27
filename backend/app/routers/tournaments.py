@@ -7,6 +7,10 @@ from app.core.deps import get_current_user
 from app.models.user import User
 from app.models.tournament import Tournament
 from app.models.club_user import ClubUser
+from fastapi.responses import FileResponse
+from app.services.pdf.tournament_pdf import generate_tournament_pdf
+from fastapi.responses import FileResponse
+from app.services.csv.tournament_csv import generate_tournament_csv
 
 router = APIRouter(
     prefix="/clubs/{club_id}/tournaments",
@@ -77,3 +81,35 @@ def list_tournaments(
     ).all()
 
     return tournaments
+
+@router.get("/{tournament_id}/export-pdf")
+def export_pdf(
+    tournament_id: str,
+    db: Session = Depends(get_db),
+    user = Depends(get_current_user)
+):
+    output_path = f"/tmp/tournament_{tournament_id}.pdf"
+
+    generate_tournament_pdf(db, tournament_id, output_path)
+
+    return FileResponse(
+        output_path,
+        media_type="application/pdf",
+        filename="tournament_results.pdf"
+    )
+
+@router.get("/{tournament_id}/export-csv")
+def export_csv(
+    tournament_id: str,
+    db: Session = Depends(get_db),
+    user = Depends(get_current_user)
+):
+    output_path = f"/tmp/tournament_{tournament_id}.csv"
+
+    generate_tournament_csv(db, tournament_id, output_path)
+
+    return FileResponse(
+        output_path,
+        media_type="text/csv",
+        filename="tournament_results.csv"
+    )
