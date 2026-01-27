@@ -2,7 +2,7 @@ import uuid
 from sqlalchemy import Column, String, Date, Boolean, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from app.db.base import Base
-from app.services.tournament_closure import finish_tournament
+
 
 class Tournament(Base):
     __tablename__ = "tournaments"
