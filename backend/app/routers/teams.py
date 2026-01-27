@@ -1,5 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from typing import List, Optional
+from pydantic import BaseModel
 
 from app.db.deps import get_db
 from app.core.deps import get_current_user
@@ -14,8 +16,31 @@ router = APIRouter(
     tags=["teams"]
 )
 
+# -------------------------
+# SCHEMAS (Pydantic)
+# -------------------------
 
-def check_ja_for_tournament(db: Session, tournament_id: str, user_id: str):
+class PlayerCreate(BaseModel):
+    first_name: str
+    last_name: str
+    license_number: str
+    ranking: int
+
+
+class TeamCreate(BaseModel):
+    seed: Optional[int] = None
+    players: List[PlayerCreate]
+
+
+# -------------------------
+# HELPERS
+# -------------------------
+
+def check_ja_for_tournament(
+    db: Session,
+    tournament_id: str,
+    user_id: str
+):
     tournament = db.query(Tournament).filter(
         Tournament.id == tournament_id
     ).first()
@@ -34,70 +59,68 @@ def check_ja_for_tournament(db: Session, tournament_id: str, user_id: str):
     return tournament
 
 
+# -------------------------
+# ROUTES
+# -------------------------
+
 @router.post("/")
 def create_team(
     tournament_id: str,
-    payload: dict,
+    team: TeamCreate,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user)
 ):
     check_ja_for_tournament(db, tournament_id, user.id)
 
-    players = payload.get("players")
-    seed = payload.get("seed")
-
-    # 🧠 Validation métier
-    if not players or len(players) != 2:
+    # Validation métier
+    if len(team.players) != 2:
         raise HTTPException(
             status_code=400,
-            detail="A team must have exactly 2 players"
+            detail="A team must contain exactly 2 players"
         )
 
-    license_numbers = [p.get("license_number") for p in players]
-    if len(set(license_numbers)) != 2:
+    licenses = [p.license_number for p in team.players]
+    if len(set(licenses)) != 2:
         raise HTTPException(
             status_code=400,
-            detail="Players must have unique license numbers"
+            detail="Players must have different license numbers"
         )
 
-    # Vérifier seed unique si renseignée
-    if seed is not None:
+    if team.seed is not None:
         existing_seed = db.query(Team).filter(
             Team.tournament_id == tournament_id,
-            Team.seed == seed
+            Team.seed == team.seed
         ).first()
         if existing_seed:
             raise HTTPException(
                 status_code=400,
-                detail=f"Seed {seed} already used"
+                detail=f"Seed {team.seed} already used"
             )
 
-    # Création de l'équipe
-    team = Team(
+    # Création équipe
+    team_db = Team(
         tournament_id=tournament_id,
-        seed=seed
+        seed=team.seed
     )
-    db.add(team)
+    db.add(team_db)
     db.commit()
-    db.refresh(team)
+    db.refresh(team_db)
 
-    # Création des joueurs
-    for p in players:
-        player = Player(
-            team_id=team.id,
-            first_name=p["first_name"],
-            last_name=p["last_name"],
-            license_number=p["license_number"],
-            ranking=p["ranking"]
-        )
-        db.add(player)
+    # Création joueurs
+    for p in team.players:
+        db.add(Player(
+            team_id=team_db.id,
+            first_name=p.first_name,
+            last_name=p.last_name,
+            license_number=p.license_number,
+            ranking=p.ranking
+        ))
 
     db.commit()
 
     return {
-        "team_id": team.id,
-        "seed": team.seed,
-        "players": players
+        "team_id": team_db.id,
+        "seed": team_db.seed
     }
 
 
@@ -118,7 +141,6 @@ def delete_team(
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
 
-    # Supprimer joueurs
     db.query(Player).filter(
         Player.team_id == team.id
     ).delete()

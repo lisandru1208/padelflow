@@ -7,7 +7,11 @@ class Player(Base):
     __tablename__ = "players"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    team_id = Column(UUID(as_uuid=True), ForeignKey("teams.id"), nullable=False)
+    team_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("teams.id", ondelete="CASCADE"),
+        nullable=False
+    )
 
     first_name = Column(String, nullable=False)
     last_name = Column(String, nullable=False)
