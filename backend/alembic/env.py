@@ -29,13 +29,17 @@ if config.config_file_name is not None:
 # target_metadata = mymodel.Base.metadata
 from app.db.base import Base
 from app.models import (
-    user, 
-    club, 
     club_user, 
+    club,
     court, 
+    match,
+    player,
+    round,
+    team,
     tournament, 
-    team
+    user    
 )
+
 target_metadata = Base.metadata
 
 # other values from the config, defined by the needs of env.py,
