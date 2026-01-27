@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List, Optional
-from pydantic import BaseModel, conlist
+from pydantic import BaseModel, Field
 
 from app.db.deps import get_db
 from app.core.deps import get_current_user
@@ -29,7 +29,7 @@ class PlayerCreate(BaseModel):
 
 class TeamCreate(BaseModel):
     seed: Optional[int] = None
-    players: conlist(PlayerCreate, min_items=2, max_items=2)
+    players: List[PlayerCreate] = Field(min_length=2, max_length=2)
 
 
 # -------------------------
