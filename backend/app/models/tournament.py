@@ -1,5 +1,5 @@
 import uuid
-from sqlalchemy import Column, String, Date, Boolean, ForeignKey
+from sqlalchemy import Column, String, Date, Boolean, ForeignKey, Text
 from sqlalchemy.dialects.postgresql import UUID
 from app.db.base import Base
 
@@ -16,3 +16,7 @@ class Tournament(Base):
     end_date = Column(Date, nullable=True)
     indoor = Column(Boolean, default=False)
     is_finished = Column(Boolean, default=False)
+    
+    # Nouveaux champs
+    bracket_generated = Column(Boolean, default=False)
+    selected_court_ids = Column(Text, nullable=True)  # JSON string des IDs de courts sélectionnés

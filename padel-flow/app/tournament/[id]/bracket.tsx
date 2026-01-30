@@ -1,0 +1,748 @@
+// app/tournament/[id]/bracket.tsx
+// Écran bracket - arbre de compétition
+
+import React, { useState, useCallback } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  RefreshControl,
+  TouchableOpacity,
+  Alert,
+  Modal,
+  ActivityIndicator,
+} from 'react-native';
+import { useLocalSearchParams, router, Stack, useFocusEffect } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
+import { useAuth } from '../../../context/AuthContext';
+import {
+  getRounds,
+  submitScore,
+  RoundWithMatches,
+  Match,
+  Team,
+} from '../../../services/api';
+import { Button, Input } from '../../../components';
+import { Colors, Spacing, FontSizes, BorderRadius } from '../../../constants/theme';
+
+export default function BracketScreen() {
+  const { id, clubId } = useLocalSearchParams<{ id: string; clubId: string }>();
+  const { token } = useAuth();
+
+  const [rounds, setRounds] = useState<RoundWithMatches[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // Modal score
+  const [showScoreModal, setShowScoreModal] = useState(false);
+  const [selectedMatch, setSelectedMatch] = useState<Match | null>(null);
+  const [scores, setScores] = useState({ set1: ['', ''], set2: ['', ''], set3: ['', ''] });
+  const [winnerId, setWinnerId] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const fetchData = async () => {
+    if (!token || !id) return;
+    try {
+      const roundsData = await getRounds(token, id);
+      setRounds(Array.isArray(roundsData) ? roundsData : []);
+    } catch (e: any) {
+      console.error('Erreur:', e);
+      Alert.alert('Erreur', e.message || 'Impossible de charger le bracket');
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
+  };
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchData();
+    }, [token, id])
+  );
+
+  const handleRefresh = () => {
+    setIsRefreshing(true);
+    fetchData();
+  };
+
+  const openScoreModal = (match: Match) => {
+    setSelectedMatch(match);
+    setScores({ set1: ['', ''], set2: ['', ''], set3: ['', ''] });
+    setWinnerId(null);
+    setShowScoreModal(true);
+  };
+
+  const formatScoreString = (): string => {
+    const sets = [];
+    if (scores.set1[0] && scores.set1[1]) {
+      sets.push(`${scores.set1[0]}-${scores.set1[1]}`);
+    }
+    if (scores.set2[0] && scores.set2[1]) {
+      sets.push(`${scores.set2[0]}-${scores.set2[1]}`);
+    }
+    if (scores.set3[0] && scores.set3[1]) {
+      sets.push(`${scores.set3[0]}-${scores.set3[1]}`);
+    }
+    return sets.join(' / ');
+  };
+
+  const handleSubmitScore = async () => {
+    if (!selectedMatch || !winnerId || !token) {
+      Alert.alert('Erreur', 'Veuillez sélectionner le vainqueur');
+      return;
+    }
+
+    const scoreString = formatScoreString();
+    if (!scoreString) {
+      Alert.alert('Erreur', 'Veuillez entrer au moins le score du premier set');
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      await submitScore(token, selectedMatch.id, {
+        score: scoreString,
+        winner_team_id: winnerId,
+      });
+
+      setShowScoreModal(false);
+      Alert.alert('Succès', 'Score enregistré !');
+      fetchData();
+    } catch (e: any) {
+      Alert.alert('Erreur', e.message || 'Impossible d\'enregistrer le score');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const getTeamDisplay = (team?: Team | null): string => {
+    if (!team || !team.players || team.players.length < 2) {
+      return 'À déterminer';
+    }
+    return `${team.players[0].last_name} / ${team.players[1].last_name}`;
+  };
+
+  const getRoundName = (roundOrder: number, totalRounds: number): string => {
+    const remaining = totalRounds - roundOrder;
+    switch (remaining) {
+      case 0:
+        return 'Finale';
+      case 1:
+        return 'Demi-finales';
+      case 2:
+        return 'Quarts de finale';
+      case 3:
+        return 'Huitièmes';
+      default:
+        return `Tour ${roundOrder}`;
+    }
+  };
+
+  const renderMatch = (match: Match) => {
+    const isCompleted = match.is_finished || !!match.winner_id;
+    const team1IsWinner = match.winner_id === match.team1_id;
+    const team2IsWinner = match.winner_id === match.team2_id;
+    const canEnterScore = match.team1 && match.team2 && !isCompleted;
+
+    return (
+      <TouchableOpacity
+        key={match.id}
+        style={styles.matchCard}
+        onPress={() => canEnterScore && openScoreModal(match)}
+        disabled={!canEnterScore}
+      >
+        <View style={styles.matchContent}>
+          {/* Équipe 1 */}
+          <View style={[
+            styles.teamRow,
+            team1IsWinner && styles.teamRowWinner,
+          ]}>
+            <Text style={[
+              styles.teamName,
+              team1IsWinner && styles.teamNameWinner,
+              !match.team1 && styles.teamNamePending,
+            ]}>
+              {getTeamDisplay(match.team1)}
+            </Text>
+            {isCompleted && match.score && (
+              <View style={styles.scoreContainer}>
+                {match.score.split(' / ').map((set, idx) => (
+                  <Text key={idx} style={[
+                    styles.setScore,
+                    team1IsWinner && styles.setScoreWinner,
+                  ]}>
+                    {set.split('-')[0]}
+                  </Text>
+                ))}
+              </View>
+            )}
+            {team1IsWinner && (
+              <Ionicons name="checkmark-circle" size={18} color={Colors.success} />
+            )}
+          </View>
+
+          {/* Séparateur */}
+          <View style={styles.matchSeparator} />
+
+          {/* Équipe 2 */}
+          <View style={[
+            styles.teamRow,
+            team2IsWinner && styles.teamRowWinner,
+          ]}>
+            <Text style={[
+              styles.teamName,
+              team2IsWinner && styles.teamNameWinner,
+              !match.team2 && styles.teamNamePending,
+            ]}>
+              {getTeamDisplay(match.team2)}
+            </Text>
+            {isCompleted && match.score && (
+              <View style={styles.scoreContainer}>
+                {match.score.split(' / ').map((set, idx) => (
+                  <Text key={idx} style={[
+                    styles.setScore,
+                    team2IsWinner && styles.setScoreWinner,
+                  ]}>
+                    {set.split('-')[1]}
+                  </Text>
+                ))}
+              </View>
+            )}
+            {team2IsWinner && (
+              <Ionicons name="checkmark-circle" size={18} color={Colors.success} />
+            )}
+          </View>
+        </View>
+
+        {/* Indicateur de statut */}
+        {canEnterScore && (
+          <View style={styles.matchStatus}>
+            <Text style={styles.matchStatusText}>Tap pour saisir le score</Text>
+          </View>
+        )}
+
+        {/* Match en attente */}
+        {!match.team1 || !match.team2 ? (
+          <View style={styles.matchPending}>
+            <Text style={styles.matchPendingText}>En attente</Text>
+          </View>
+        ) : null}
+      </TouchableOpacity>
+    );
+  };
+
+  if (isLoading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color={Colors.primary} />
+        <Text style={styles.loadingText}>Chargement du bracket...</Text>
+      </View>
+    );
+  }
+
+  if (rounds.length === 0) {
+    return (
+      <>
+        <Stack.Screen
+          options={{
+            title: 'Bracket',
+            headerShown: true,
+            headerStyle: { backgroundColor: Colors.primary },
+            headerTintColor: Colors.textInverse,
+          }}
+        />
+        <View style={styles.emptyContainer}>
+          <Ionicons name="git-branch-outline" size={64} color={Colors.textLight} />
+          <Text style={styles.emptyText}>Aucun bracket généré</Text>
+          <Text style={styles.emptySubtext}>Générez d'abord le bracket depuis la page du tournoi</Text>
+          <Button
+            title="Retour"
+            onPress={() => router.back()}
+            style={{ marginTop: Spacing.lg }}
+          />
+        </View>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <Stack.Screen
+        options={{
+          title: 'Bracket',
+          headerShown: true,
+          headerStyle: { backgroundColor: Colors.primary },
+          headerTintColor: Colors.textInverse,
+          headerLeft: () => (
+            <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+              <Ionicons name="arrow-back" size={24} color={Colors.textInverse} />
+            </TouchableOpacity>
+          ),
+        }}
+      />
+
+      <ScrollView
+        style={styles.container}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={handleRefresh}
+            colors={[Colors.primary]}
+          />
+        }
+      >
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          <View style={styles.bracketContainer}>
+            {rounds.map((round) => (
+              <View key={round.id} style={styles.roundColumn}>
+                <Text style={styles.roundTitle}>
+                  {getRoundName(round.order, rounds.length)}
+                </Text>
+                <View style={styles.matchesColumn}>
+                  {round.matches.map((match) => renderMatch(match))}
+                </View>
+              </View>
+            ))}
+          </View>
+        </ScrollView>
+
+        {/* Légende */}
+        <View style={styles.legend}>
+          <View style={styles.legendItem}>
+            <View style={[styles.legendDot, { backgroundColor: Colors.success }]} />
+            <Text style={styles.legendText}>Match terminé</Text>
+          </View>
+          <View style={styles.legendItem}>
+            <View style={[styles.legendDot, { backgroundColor: Colors.warning }]} />
+            <Text style={styles.legendText}>En attente de score</Text>
+          </View>
+          <View style={styles.legendItem}>
+            <View style={[styles.legendDot, { backgroundColor: Colors.textLight }]} />
+            <Text style={styles.legendText}>En attente d'adversaire</Text>
+          </View>
+        </View>
+      </ScrollView>
+
+      {/* Modal saisie score */}
+      <Modal
+        visible={showScoreModal}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setShowScoreModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Saisir le Score</Text>
+              <TouchableOpacity onPress={() => setShowScoreModal(false)}>
+                <Ionicons name="close" size={24} color={Colors.text} />
+              </TouchableOpacity>
+            </View>
+
+            {selectedMatch && (
+              <>
+                {/* Sélection du vainqueur */}
+                <Text style={styles.label}>Vainqueur</Text>
+                <View style={styles.winnerSelection}>
+                  <TouchableOpacity
+                    style={[
+                      styles.winnerOption,
+                      winnerId === selectedMatch.team1_id && styles.winnerOptionActive,
+                    ]}
+                    onPress={() => setWinnerId(selectedMatch.team1_id || null)}
+                  >
+                    <Text style={[
+                      styles.winnerOptionText,
+                      winnerId === selectedMatch.team1_id && styles.winnerOptionTextActive,
+                    ]}>
+                      {getTeamDisplay(selectedMatch.team1)}
+                    </Text>
+                    {winnerId === selectedMatch.team1_id && (
+                      <Ionicons name="checkmark-circle" size={20} color={Colors.primary} />
+                    )}
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[
+                      styles.winnerOption,
+                      winnerId === selectedMatch.team2_id && styles.winnerOptionActive,
+                    ]}
+                    onPress={() => setWinnerId(selectedMatch.team2_id || null)}
+                  >
+                    <Text style={[
+                      styles.winnerOptionText,
+                      winnerId === selectedMatch.team2_id && styles.winnerOptionTextActive,
+                    ]}>
+                      {getTeamDisplay(selectedMatch.team2)}
+                    </Text>
+                    {winnerId === selectedMatch.team2_id && (
+                      <Ionicons name="checkmark-circle" size={20} color={Colors.primary} />
+                    )}
+                  </TouchableOpacity>
+                </View>
+
+                {/* Scores par set */}
+                <Text style={styles.label}>Score</Text>
+                
+                {/* Set 1 */}
+                <View style={styles.setRow}>
+                  <Text style={styles.setLabel}>Set 1</Text>
+                  <View style={styles.setInputs}>
+                    <Input
+                      placeholder="0"
+                      value={scores.set1[0]}
+                      onChangeText={(v) => setScores({ ...scores, set1: [v, scores.set1[1]] })}
+                      keyboardType="numeric"
+                      containerStyle={styles.scoreInput}
+                    />
+                    <Text style={styles.scoreSeparator}>-</Text>
+                    <Input
+                      placeholder="0"
+                      value={scores.set1[1]}
+                      onChangeText={(v) => setScores({ ...scores, set1: [scores.set1[0], v] })}
+                      keyboardType="numeric"
+                      containerStyle={styles.scoreInput}
+                    />
+                  </View>
+                </View>
+
+                {/* Set 2 */}
+                <View style={styles.setRow}>
+                  <Text style={styles.setLabel}>Set 2</Text>
+                  <View style={styles.setInputs}>
+                    <Input
+                      placeholder="0"
+                      value={scores.set2[0]}
+                      onChangeText={(v) => setScores({ ...scores, set2: [v, scores.set2[1]] })}
+                      keyboardType="numeric"
+                      containerStyle={styles.scoreInput}
+                    />
+                    <Text style={styles.scoreSeparator}>-</Text>
+                    <Input
+                      placeholder="0"
+                      value={scores.set2[1]}
+                      onChangeText={(v) => setScores({ ...scores, set2: [scores.set2[0], v] })}
+                      keyboardType="numeric"
+                      containerStyle={styles.scoreInput}
+                    />
+                  </View>
+                </View>
+
+                {/* Set 3 (optionnel) */}
+                <View style={styles.setRow}>
+                  <Text style={styles.setLabel}>Set 3</Text>
+                  <View style={styles.setInputs}>
+                    <Input
+                      placeholder="0"
+                      value={scores.set3[0]}
+                      onChangeText={(v) => setScores({ ...scores, set3: [v, scores.set3[1]] })}
+                      keyboardType="numeric"
+                      containerStyle={styles.scoreInput}
+                    />
+                    <Text style={styles.scoreSeparator}>-</Text>
+                    <Input
+                      placeholder="0"
+                      value={scores.set3[1]}
+                      onChangeText={(v) => setScores({ ...scores, set3: [scores.set3[0], v] })}
+                      keyboardType="numeric"
+                      containerStyle={styles.scoreInput}
+                    />
+                  </View>
+                </View>
+
+                {/* Aperçu */}
+                <View style={styles.scorePreview}>
+                  <Text style={styles.scorePreviewLabel}>Résultat :</Text>
+                  <Text style={styles.scorePreviewValue}>
+                    {formatScoreString() || '-'}
+                  </Text>
+                </View>
+              </>
+            )}
+
+            <View style={styles.modalButtons}>
+              <Button
+                title="Annuler"
+                onPress={() => setShowScoreModal(false)}
+                variant="outline"
+                style={styles.modalButton}
+              />
+              <Button
+                title="Valider"
+                onPress={handleSubmitScore}
+                loading={isSubmitting}
+                style={styles.modalButton}
+              />
+            </View>
+          </View>
+        </View>
+      </Modal>
+    </>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: Colors.background,
+  },
+  loadingContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.background,
+  },
+  loadingText: {
+    marginTop: Spacing.md,
+    color: Colors.textSecondary,
+  },
+  emptyContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.background,
+    padding: Spacing.xl,
+  },
+  emptyText: {
+    fontSize: FontSizes.lg,
+    fontWeight: '600',
+    color: Colors.text,
+    marginTop: Spacing.md,
+  },
+  emptySubtext: {
+    fontSize: FontSizes.md,
+    color: Colors.textSecondary,
+    textAlign: 'center',
+    marginTop: Spacing.sm,
+  },
+  backButton: {
+    padding: Spacing.sm,
+    marginLeft: Spacing.xs,
+  },
+  bracketContainer: {
+    flexDirection: 'row',
+    padding: Spacing.md,
+  },
+  roundColumn: {
+    marginRight: Spacing.lg,
+    minWidth: 180,
+  },
+  roundTitle: {
+    fontSize: FontSizes.md,
+    fontWeight: '600',
+    textAlign: 'center',
+    marginBottom: Spacing.md,
+    backgroundColor: Colors.primary,
+    color: Colors.textInverse,
+    paddingVertical: Spacing.sm,
+    borderRadius: BorderRadius.md,
+    overflow: 'hidden',
+  },
+  matchesColumn: {
+    justifyContent: 'space-around',
+    flex: 1,
+  },
+  matchCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: BorderRadius.md,
+    marginBottom: Spacing.md,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  matchContent: {
+    padding: Spacing.sm,
+  },
+  teamRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: Spacing.xs,
+    paddingHorizontal: Spacing.sm,
+    borderRadius: BorderRadius.sm,
+  },
+  teamRowWinner: {
+    backgroundColor: Colors.successLight,
+  },
+  teamName: {
+    flex: 1,
+    fontSize: FontSizes.sm,
+    color: Colors.text,
+  },
+  teamNameWinner: {
+    fontWeight: '600',
+  },
+  teamNamePending: {
+    color: Colors.textLight,
+    fontStyle: 'italic',
+  },
+  scoreContainer: {
+    flexDirection: 'row',
+    gap: Spacing.xs,
+  },
+  setScore: {
+    fontSize: FontSizes.sm,
+    color: Colors.textSecondary,
+    fontWeight: '500',
+    backgroundColor: Colors.surfaceSecondary,
+    paddingHorizontal: Spacing.xs,
+    borderRadius: BorderRadius.sm,
+    overflow: 'hidden',
+  },
+  setScoreWinner: {
+    color: Colors.success,
+    fontWeight: '600',
+  },
+  matchSeparator: {
+    height: 1,
+    backgroundColor: Colors.border,
+    marginVertical: Spacing.xs,
+  },
+  matchStatus: {
+    backgroundColor: Colors.warningLight,
+    paddingVertical: Spacing.xs,
+    alignItems: 'center',
+  },
+  matchStatusText: {
+    fontSize: FontSizes.xs,
+    color: Colors.warning,
+  },
+  matchPending: {
+    backgroundColor: Colors.surfaceSecondary,
+    paddingVertical: Spacing.xs,
+    alignItems: 'center',
+  },
+  matchPendingText: {
+    fontSize: FontSizes.xs,
+    color: Colors.textLight,
+  },
+  legend: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    flexWrap: 'wrap',
+    gap: Spacing.md,
+    padding: Spacing.md,
+    marginTop: Spacing.md,
+  },
+  legendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+  },
+  legendDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+  legendText: {
+    fontSize: FontSizes.xs,
+    color: Colors.textSecondary,
+  },
+  // Modal styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: Colors.surface,
+    borderTopLeftRadius: BorderRadius.xl,
+    borderTopRightRadius: BorderRadius.xl,
+    padding: Spacing.lg,
+    maxHeight: '80%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: Spacing.lg,
+  },
+  modalTitle: {
+    fontSize: FontSizes.xl,
+    fontWeight: 'bold',
+    color: Colors.text,
+  },
+  label: {
+    fontSize: FontSizes.sm,
+    fontWeight: '600',
+    color: Colors.text,
+    marginBottom: Spacing.sm,
+  },
+  winnerSelection: {
+    gap: Spacing.sm,
+    marginBottom: Spacing.lg,
+  },
+  winnerOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: Spacing.md,
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface,
+  },
+  winnerOptionActive: {
+    borderColor: Colors.primary,
+    backgroundColor: Colors.infoLight,
+  },
+  winnerOptionText: {
+    fontSize: FontSizes.md,
+    color: Colors.text,
+  },
+  winnerOptionTextActive: {
+    fontWeight: '600',
+    color: Colors.primary,
+  },
+  setRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: Spacing.sm,
+  },
+  setLabel: {
+    width: 60,
+    fontSize: FontSizes.sm,
+    color: Colors.textSecondary,
+  },
+  setInputs: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  scoreInput: {
+    flex: 1,
+    marginBottom: 0,
+  },
+  scoreSeparator: {
+    fontSize: FontSizes.lg,
+    color: Colors.text,
+    marginHorizontal: Spacing.sm,
+  },
+  scorePreview: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: Spacing.md,
+    backgroundColor: Colors.surfaceSecondary,
+    borderRadius: BorderRadius.md,
+    marginVertical: Spacing.md,
+  },
+  scorePreviewLabel: {
+    fontSize: FontSizes.md,
+    color: Colors.textSecondary,
+    marginRight: Spacing.sm,
+  },
+  scorePreviewValue: {
+    fontSize: FontSizes.lg,
+    fontWeight: '600',
+    color: Colors.text,
+  },
+  modalButtons: {
+    flexDirection: 'row',
+    gap: Spacing.md,
+    marginTop: Spacing.md,
+  },
+  modalButton: {
+    flex: 1,
+  },
+});
