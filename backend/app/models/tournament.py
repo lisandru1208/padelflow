@@ -16,7 +16,5 @@ class Tournament(Base):
     end_date = Column(Date, nullable=True)
     indoor = Column(Boolean, default=False)
     is_finished = Column(Boolean, default=False)
-    
-    # Nouveaux champs
     bracket_generated = Column(Boolean, default=False)
-    selected_court_ids = Column(Text, nullable=True)  # JSON string des IDs de courts sélectionnés
+    selected_court_ids = Column(Text, nullable=True) 
