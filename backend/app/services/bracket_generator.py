@@ -22,18 +22,23 @@ def generate_bracket(db, tournament_id: str):
     bracket_size = compute_bracket_size(len(teams))
     round_count = int(math.log2(bracket_size))
 
-    # supprimer ancien tableau
-    db.query(Match).join(Round).filter(
+    # Supprimer ancien tableau - d'abord récupérer les rounds
+    existing_rounds = db.query(Round).filter(
         Round.tournament_id == tournament_id
-    ).delete(synchronize_session=False)
-
+    ).all()
+    
+    # Supprimer les matchs de ces rounds
+    for r in existing_rounds:
+        db.query(Match).filter(Match.round_id == r.id).delete()
+    
+    # Supprimer les rounds
     db.query(Round).filter(
         Round.tournament_id == tournament_id
     ).delete()
 
     db.commit()
 
-    # créer rounds
+    # Créer rounds
     rounds = []
     for i in range(round_count):
         r = Round(
@@ -46,7 +51,7 @@ def generate_bracket(db, tournament_id: str):
         db.refresh(r)
         rounds.append(r)
 
-    # seeds
+    # Seeds
     seeded = sorted(
         [t for t in teams if t.seed is not None],
         key=lambda t: t.seed
@@ -55,21 +60,22 @@ def generate_bracket(db, tournament_id: str):
 
     slots = [None] * bracket_size
 
-    # positions seeds (V1 simple)
+    # Positions seeds (V1 simple)
     seed_positions = list(range(len(seeded)))
 
     for team, pos in zip(seeded, seed_positions):
         slots[pos] = team
 
-    # compléter avec non-seeds
+    # Compléter avec non-seeds
     idx = 0
     for i in range(bracket_size):
         if slots[i] is None and idx < len(unseeded):
             slots[i] = unseeded[idx]
             idx += 1
 
-    # créer matchs round 1
+    # Créer matchs round 1
     first_round = rounds[0]
+    first_round_matches = []
 
     for i in range(0, bracket_size, 2):
         match = Match(
@@ -79,8 +85,11 @@ def generate_bracket(db, tournament_id: str):
             team2_id=slots[i + 1].id if slots[i + 1] else None
         )
         db.add(match)
+        first_round_matches.append(match)
 
-    # créer matchs pour les rounds suivants (vides, à remplir quand les résultats arrivent)
+    db.commit()
+
+    # Créer matchs pour les rounds suivants (vides)
     matches_in_round = bracket_size // 2
     for round_idx in range(1, round_count):
         matches_in_round = matches_in_round // 2
@@ -97,8 +106,11 @@ def generate_bracket(db, tournament_id: str):
 
     db.commit()
 
+    # Retourner les infos du bracket
     return {
+        "success": True,
         "teams": len(teams),
         "bracket_size": bracket_size,
-        "rounds": round_count
+        "rounds": round_count,
+        "message": f"Bracket généré avec {len(teams)} équipes"
     }
