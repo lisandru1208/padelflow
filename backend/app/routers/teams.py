@@ -110,21 +110,78 @@ def create_team(
     db.refresh(team_db)
 
     # Création joueurs
+    players_db = []
     for p in team.players:
-        db.add(Player(
+        player = Player(
             team_id=team_db.id,
             first_name=p.first_name,
             last_name=p.last_name,
             license_number=p.license_number,
             ranking=p.ranking
-        ))
+        )
+        db.add(player)
+        players_db.append(player)
 
     db.commit()
+    
+    # Refresh pour obtenir les IDs des joueurs
+    for player in players_db:
+        db.refresh(player)
 
+    # Retourner l'équipe complète avec les joueurs
     return {
-        "team_id": team_db.id,
-        "seed": team_db.seed
+        "id": team_db.id,
+        "seed": team_db.seed,
+        "tournament_id": tournament_id,
+        "players": [
+            {
+                "id": p.id,
+                "first_name": p.first_name,
+                "last_name": p.last_name,
+                "license_number": p.license_number,
+                "ranking": p.ranking
+            }
+            for p in players_db
+        ]
     }
+
+
+@router.get("/")
+def get_teams(
+    tournament_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    # Autorisation
+    check_ja_for_tournament(db, tournament_id, user.id)
+
+    teams = db.query(Team).filter(
+        Team.tournament_id == tournament_id
+    ).all()
+
+    result = []
+    for team in teams:
+        players = db.query(Player).filter(
+            Player.team_id == team.id
+        ).all()
+
+        result.append({
+            "id": team.id,
+            "seed": team.seed,
+            "tournament_id": tournament_id,
+            "players": [
+                {
+                    "id": p.id,
+                    "first_name": p.first_name,
+                    "last_name": p.last_name,
+                    "license_number": p.license_number,
+                    "ranking": p.ranking
+                }
+                for p in players
+            ]
+        })
+
+    return result
 
 
 @router.delete("/{team_id}")
@@ -152,6 +209,7 @@ def delete_team(
     db.commit()
 
     return {"message": "Team deleted"}
+
 
 @router.post("/import-csv")
 def import_teams_csv(
