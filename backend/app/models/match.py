@@ -22,3 +22,5 @@ class Match(Base):
     court_id = Column(UUID(as_uuid=True), ForeignKey("courts.id"), nullable=True)
     score = Column(String, nullable=True)
     is_finished = Column(Boolean, default=False)
+    bracket_type = Column(String, default='winner')  # 'winner' ou 'loser'
+    classification_rank = Column(Integer, nullable=True)  # 3 pour 3ème place, 5 pour 5ème, etc.

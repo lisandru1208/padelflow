@@ -1,5 +1,5 @@
 // app/tournament/[id]/bracket.tsx
-// Écran bracket - arbre de compétition
+// Écran bracket avec onglets Winner et Classement
 
 import React, { useState, useCallback } from 'react';
 import {
@@ -18,6 +18,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../../context/AuthContext';
 import {
   getRounds,
+  getClassificationRounds,
   submitScore,
   RoundWithMatches,
   Match,
@@ -30,9 +31,13 @@ export default function BracketScreen() {
   const { id, clubId } = useLocalSearchParams<{ id: string; clubId: string }>();
   const { token } = useAuth();
 
-  const [rounds, setRounds] = useState<RoundWithMatches[]>([]);
+  const [winnerRounds, setWinnerRounds] = useState<RoundWithMatches[]>([]);
+  const [classificationRounds, setClassificationRounds] = useState<RoundWithMatches[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  
+  // Onglets
+  const [activeTab, setActiveTab] = useState<'winner' | 'classification'>('winner');
 
   // Modal score
   const [showScoreModal, setShowScoreModal] = useState(false);
@@ -44,8 +49,12 @@ export default function BracketScreen() {
   const fetchData = async () => {
     if (!token || !id) return;
     try {
-      const roundsData = await getRounds(token, id);
-      setRounds(Array.isArray(roundsData) ? roundsData : []);
+      const [winnerData, classificationData] = await Promise.all([
+        getRounds(token, id),
+        getClassificationRounds(token, id)
+      ]);
+      setWinnerRounds(Array.isArray(winnerData) ? winnerData : []);
+      setClassificationRounds(Array.isArray(classificationData) ? classificationData : []);
     } catch (e: any) {
       console.error('Erreur:', e);
       Alert.alert('Erreur', e.message || 'Impossible de charger le bracket');
@@ -223,12 +232,53 @@ export default function BracketScreen() {
         )}
 
         {/* Match en attente */}
-        {!match.team1 || !match.team2 ? (
+        {(!match.team1 || !match.team2) && !isCompleted && (
           <View style={styles.matchPending}>
             <Text style={styles.matchPendingText}>En attente</Text>
           </View>
-        ) : null}
+        )}
+        
+        {/* Court assigné */}
+        {match.court && (
+          <View style={styles.courtBadge}>
+            <Ionicons name="location" size={12} color={Colors.textSecondary} />
+            <Text style={styles.courtBadgeText}>{match.court.name}</Text>
+          </View>
+        )}
       </TouchableOpacity>
+    );
+  };
+
+  const renderBracket = (rounds: RoundWithMatches[], isClassification: boolean = false) => {
+    if (rounds.length === 0) {
+      return (
+        <View style={styles.emptyBracket}>
+          <Ionicons name="git-branch-outline" size={48} color={Colors.textLight} />
+          <Text style={styles.emptyBracketText}>
+            {isClassification ? 'Pas de matchs de classement' : 'Aucun match'}
+          </Text>
+        </View>
+      );
+    }
+
+    return (
+      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+        <View style={styles.bracketContainer}>
+          {rounds.map((round) => (
+            <View key={round.id} style={styles.roundColumn}>
+              <Text style={[
+                styles.roundTitle,
+                isClassification && styles.roundTitleClassification
+              ]}>
+                {round.name}
+              </Text>
+              <View style={styles.matchesColumn}>
+                {round.matches.map((match) => renderMatch(match))}
+              </View>
+            </View>
+          ))}
+        </View>
+      </ScrollView>
     );
   };
 
@@ -241,26 +291,31 @@ export default function BracketScreen() {
     );
   }
 
-  if (rounds.length === 0) {
+  if (winnerRounds.length === 0 && classificationRounds.length === 0) {
     return (
       <>
-        <Stack.Screen
-          options={{
-            title: 'Bracket',
-            headerShown: true,
-            headerStyle: { backgroundColor: Colors.primary },
-            headerTintColor: Colors.textInverse,
-          }}
-        />
-        <View style={styles.emptyContainer}>
-          <Ionicons name="git-branch-outline" size={64} color={Colors.textLight} />
-          <Text style={styles.emptyText}>Aucun bracket généré</Text>
-          <Text style={styles.emptySubtext}>Générez d'abord le bracket depuis la page du tournoi</Text>
-          <Button
-            title="Retour"
-            onPress={() => router.back()}
-            style={{ marginTop: Spacing.lg }}
-          />
+        <Stack.Screen options={{ headerShown: false }} />
+        <View style={styles.container}>
+          <View style={styles.headerContainer}>
+            <View style={styles.statusBarSpacer} />
+            <View style={styles.headerBar}>
+              <TouchableOpacity onPress={() => router.back()} style={styles.headerButton}>
+                <Ionicons name="arrow-back" size={24} color={Colors.textInverse} />
+              </TouchableOpacity>
+              <Text style={styles.headerTitle}>Bracket</Text>
+              <View style={styles.headerButton} />
+            </View>
+          </View>
+          <View style={styles.emptyContainer}>
+            <Ionicons name="git-branch-outline" size={64} color={Colors.textLight} />
+            <Text style={styles.emptyText}>Aucun bracket généré</Text>
+            <Text style={styles.emptySubtext}>Générez d'abord le bracket depuis la page du tournoi</Text>
+            <Button
+              title="Retour"
+              onPress={() => router.back()}
+              style={{ marginTop: Spacing.lg }}
+            />
+          </View>
         </View>
       </>
     );
@@ -268,61 +323,84 @@ export default function BracketScreen() {
 
   return (
     <>
-      <Stack.Screen
-        options={{
-          title: 'Bracket',
-          headerShown: true,
-          headerStyle: { backgroundColor: Colors.primary },
-          headerTintColor: Colors.textInverse,
-          headerLeft: () => (
-            <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+      <Stack.Screen options={{ headerShown: false }} />
+
+      <View style={styles.container}>
+        {/* Header */}
+        <View style={styles.headerContainer}>
+          <View style={styles.statusBarSpacer} />
+          <View style={styles.headerBar}>
+            <TouchableOpacity onPress={() => router.back()} style={styles.headerButton}>
               <Ionicons name="arrow-back" size={24} color={Colors.textInverse} />
             </TouchableOpacity>
-          ),
-        }}
-      />
-
-      <ScrollView
-        style={styles.container}
-        refreshControl={
-          <RefreshControl
-            refreshing={isRefreshing}
-            onRefresh={handleRefresh}
-            colors={[Colors.primary]}
-          />
-        }
-      >
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          <View style={styles.bracketContainer}>
-            {rounds.map((round) => (
-              <View key={round.id} style={styles.roundColumn}>
-                <Text style={styles.roundTitle}>
-                  {getRoundName(round.order, rounds.length)}
-                </Text>
-                <View style={styles.matchesColumn}>
-                  {round.matches.map((match) => renderMatch(match))}
-                </View>
-              </View>
-            ))}
+            <Text style={styles.headerTitle}>Bracket</Text>
+            <View style={styles.headerButton} />
           </View>
-        </ScrollView>
-
-        {/* Légende */}
-        <View style={styles.legend}>
-          <View style={styles.legendItem}>
-            <View style={[styles.legendDot, { backgroundColor: Colors.success }]} />
-            <Text style={styles.legendText}>Match terminé</Text>
-          </View>
-          <View style={styles.legendItem}>
-            <View style={[styles.legendDot, { backgroundColor: Colors.warning }]} />
-            <Text style={styles.legendText}>En attente de score</Text>
-          </View>
-          <View style={styles.legendItem}>
-            <View style={[styles.legendDot, { backgroundColor: Colors.textLight }]} />
-            <Text style={styles.legendText}>En attente d'adversaire</Text>
+          
+          {/* Onglets */}
+          <View style={styles.tabsContainer}>
+            <TouchableOpacity
+              style={[styles.tab, activeTab === 'winner' && styles.tabActive]}
+              onPress={() => setActiveTab('winner')}
+            >
+              <Ionicons 
+                name="trophy" 
+                size={18} 
+                color={activeTab === 'winner' ? Colors.primary : Colors.textInverse} 
+              />
+              <Text style={[styles.tabText, activeTab === 'winner' && styles.tabTextActive]}>
+                Tableau principal
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.tab, activeTab === 'classification' && styles.tabActive]}
+              onPress={() => setActiveTab('classification')}
+            >
+              <Ionicons 
+                name="podium" 
+                size={18} 
+                color={activeTab === 'classification' ? Colors.primary : Colors.textInverse} 
+              />
+              <Text style={[styles.tabText, activeTab === 'classification' && styles.tabTextActive]}>
+                Classement
+              </Text>
+            </TouchableOpacity>
           </View>
         </View>
-      </ScrollView>
+
+        {/* Contenu */}
+        <ScrollView
+          style={styles.scrollContent}
+          refreshControl={
+            <RefreshControl
+              refreshing={isRefreshing}
+              onRefresh={handleRefresh}
+              colors={[Colors.primary]}
+            />
+          }
+        >
+          {activeTab === 'winner' 
+            ? renderBracket(winnerRounds, false)
+            : renderBracket(classificationRounds, true)
+          }
+
+          {/* Légende */}
+          <View style={styles.legend}>
+            <View style={styles.legendItem}>
+              <View style={[styles.legendDot, { backgroundColor: Colors.success }]} />
+              <Text style={styles.legendText}>Match terminé</Text>
+            </View>
+            <View style={styles.legendItem}>
+              <View style={[styles.legendDot, { backgroundColor: Colors.warning }]} />
+              <Text style={styles.legendText}>En attente de score</Text>
+            </View>
+            <View style={styles.legendItem}>
+              <View style={[styles.legendDot, { backgroundColor: Colors.textLight }]} />
+              <Text style={styles.legendText}>En attente d'adversaire</Text>
+            </View>
+          </View>
+        </ScrollView>
+      </View>
 
       {/* Modal saisie score */}
       <Modal
@@ -487,6 +565,61 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Colors.background,
   },
+  headerContainer: {
+    backgroundColor: Colors.primary,
+  },
+  statusBarSpacer: {
+    height: 44,
+  },
+  headerBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: Spacing.sm,
+    height: 56,
+  },
+  headerButton: {
+    padding: Spacing.sm,
+    width: 48,
+  },
+  headerTitle: {
+    flex: 1,
+    fontSize: FontSizes.lg,
+    fontWeight: '600',
+    color: Colors.textInverse,
+    textAlign: 'center',
+  },
+  tabsContainer: {
+    flexDirection: 'row',
+    backgroundColor: 'rgba(0,0,0,0.1)',
+    marginHorizontal: Spacing.md,
+    marginBottom: Spacing.md,
+    borderRadius: BorderRadius.lg,
+    padding: 4,
+  },
+  tab: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: Spacing.sm,
+    borderRadius: BorderRadius.md,
+    gap: Spacing.xs,
+  },
+  tabActive: {
+    backgroundColor: Colors.surface,
+  },
+  tabText: {
+    fontSize: FontSizes.sm,
+    color: Colors.textInverse,
+    fontWeight: '500',
+  },
+  tabTextActive: {
+    color: Colors.primary,
+  },
+  scrollContent: {
+    flex: 1,
+  },
   loadingContainer: {
     flex: 1,
     alignItems: 'center',
@@ -516,9 +649,15 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: Spacing.sm,
   },
-  backButton: {
-    padding: Spacing.sm,
-    marginLeft: Spacing.xs,
+  emptyBracket: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: Spacing.xxl,
+  },
+  emptyBracketText: {
+    fontSize: FontSizes.md,
+    color: Colors.textSecondary,
+    marginTop: Spacing.md,
   },
   bracketContainer: {
     flexDirection: 'row',
@@ -538,6 +677,9 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.sm,
     borderRadius: BorderRadius.md,
     overflow: 'hidden',
+  },
+  roundTitleClassification: {
+    backgroundColor: Colors.accent,
   },
   matchesColumn: {
     justifyContent: 'space-around',
@@ -616,6 +758,18 @@ const styles = StyleSheet.create({
     fontSize: FontSizes.xs,
     color: Colors.textLight,
   },
+  courtBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: Spacing.xs,
+    backgroundColor: Colors.surfaceSecondary,
+    gap: Spacing.xs,
+  },
+  courtBadgeText: {
+    fontSize: FontSizes.xs,
+    color: Colors.textSecondary,
+  },
   legend: {
     flexDirection: 'row',
     justifyContent: 'center',
@@ -623,6 +777,7 @@ const styles = StyleSheet.create({
     gap: Spacing.md,
     padding: Spacing.md,
     marginTop: Spacing.md,
+    marginBottom: Spacing.xl,
   },
   legendItem: {
     flexDirection: 'row',

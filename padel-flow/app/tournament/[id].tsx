@@ -97,9 +97,11 @@ export default function TournamentDetailScreen() {
 
       // Récupérer les courts du club (filtrés selon indoor/outdoor du tournoi)
       const courtsData = await getCourts(token, clubId);
-      // Filtrer les courts selon le type du tournoi
+      // Filtrer les courts selon le type du tournoi et trier par nom
       const filteredCourts = Array.isArray(courtsData) 
-        ? courtsData.filter(c => c.indoor === tournamentData.indoor)
+        ? courtsData
+            .filter(c => c.indoor === tournamentData.indoor)
+            .sort((a, b) => a.name.localeCompare(b.name))
         : [];
       setCourts(filteredCourts);
 
@@ -389,60 +391,64 @@ export default function TournamentDetailScreen() {
     <>
       <Stack.Screen
         options={{
-          title: tournament.name,
-          headerShown: true,
-          headerStyle: { backgroundColor: Colors.accent },
-          headerTintColor: Colors.textInverse,
-          headerLeft: () => (
-            <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-              <Ionicons name="arrow-back" size={24} color={Colors.textInverse} />
-            </TouchableOpacity>
-          ),
+          headerShown: false,
         }}
       />
-      <ScrollView
-        style={styles.container}
-        refreshControl={
-          <RefreshControl
-            refreshing={isRefreshing}
-            onRefresh={handleRefresh}
-            colors={[Colors.primary]}
-          />
-        }
-      >
-        {/* Header du tournoi */}
-        <View style={styles.header}>
-          <View style={styles.tournamentIcon}>
-            <Ionicons name="trophy" size={32} color={Colors.textInverse} />
+      <View style={styles.container}>
+        {/* Header personnalisé */}
+        <View style={styles.headerContainer}>
+          <View style={styles.statusBarSpacer} />
+          <View style={styles.headerBar}>
+            <TouchableOpacity onPress={() => router.back()} style={styles.headerButton}>
+              <Ionicons name="arrow-back" size={24} color={Colors.textInverse} />
+            </TouchableOpacity>
+            <Text style={styles.headerTitle} numberOfLines={1}>{tournament.name}</Text>
+            <View style={styles.headerButton} />
           </View>
-          <Text style={styles.tournamentName}>{tournament.name}</Text>
-          <View style={styles.tagsRow}>
-            <View style={styles.tag}>
-              <Text style={styles.tagText}>{tournament.category}</Text>
-            </View>
-            <View style={styles.tag}>
-              <Text style={styles.tagText}>{tournament.gender}</Text>
-            </View>
-            <View style={styles.tag}>
-              <Ionicons 
-                name={tournament.indoor ? 'home' : 'sunny'} 
-                size={12} 
-                color={Colors.textInverse} 
-              />
-              <Text style={styles.tagText}>{tournament.indoor ? 'Indoor' : 'Outdoor'}</Text>
-            </View>
-          </View>
-          <Text style={styles.dateText}>{formatDate(tournament.start_date)}</Text>
           
-          {tournament.bracket_generated && (
-            <View style={styles.statusBadge}>
-              <Ionicons name="checkmark-circle" size={16} color={Colors.success} />
-              <Text style={styles.statusText}>Bracket généré</Text>
+          {/* Info tournoi */}
+          <View style={styles.tournamentInfo}>
+            <View style={styles.tournamentIcon}>
+              <Ionicons name="trophy" size={32} color={Colors.textInverse} />
             </View>
-          )}
+            <Text style={styles.tournamentName}>{tournament.name}</Text>
+            <View style={styles.tagsRow}>
+              <View style={styles.tag}>
+                <Text style={styles.tagText}>{tournament.category}</Text>
+              </View>
+              <View style={styles.tag}>
+                <Text style={styles.tagText}>{tournament.gender}</Text>
+              </View>
+              <View style={styles.tag}>
+                <Ionicons 
+                  name={tournament.indoor ? 'home' : 'sunny'} 
+                  size={12} 
+                  color={Colors.textInverse} 
+                />
+                <Text style={styles.tagText}>{tournament.indoor ? 'Indoor' : 'Outdoor'}</Text>
+              </View>
+            </View>
+            <Text style={styles.dateText}>{formatDate(tournament.start_date)}</Text>
+            
+            {tournament.bracket_generated && (
+              <View style={styles.statusBadge}>
+                <Ionicons name="checkmark-circle" size={16} color={Colors.success} />
+                <Text style={styles.statusText}>Bracket généré</Text>
+              </View>
+            )}
+          </View>
         </View>
 
-        <View style={styles.content}>
+        <ScrollView
+          style={styles.scrollContent}
+          refreshControl={
+            <RefreshControl
+              refreshing={isRefreshing}
+              onRefresh={handleRefresh}
+              colors={[Colors.primary]}
+            />
+          }
+        >
           {/* Section Équipes */}
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
@@ -536,30 +542,32 @@ export default function TournamentDetailScreen() {
           </View>
 
           {/* Boutons d'action */}
-          {!tournament.bracket_generated ? (
-            <Button
-              title="Générer le bracket"
-              onPress={handleGenerateBracket}
-              style={styles.actionButton}
-              disabled={teams.length < 2 || selectedCourts.length === 0}
-            />
-          ) : (
-            <View style={styles.actionButtons}>
+          <View style={styles.content}>
+            {!tournament.bracket_generated ? (
               <Button
-                title="Voir le bracket"
-                onPress={() => router.push(`/tournament/${id}/bracket?clubId=${clubId}`)}
-                style={styles.actionButtonHalf}
+                title="Générer le bracket"
+                onPress={handleGenerateBracket}
+                style={styles.actionButton}
+                disabled={teams.length < 2 || selectedCourts.length === 0}
               />
-              <Button
-                title="Réinitialiser"
-                onPress={handleResetBracket}
-                variant="danger"
-                style={styles.actionButtonHalf}
-              />
-            </View>
-          )}
-        </View>
-      </ScrollView>
+            ) : (
+              <View style={styles.actionButtons}>
+                <Button
+                  title="Voir le bracket"
+                  onPress={() => router.push(`/tournament/${id}/bracket?clubId=${clubId}`)}
+                  style={styles.actionButtonHalf}
+                />
+                <Button
+                  title="Réinitialiser"
+                  onPress={handleResetBracket}
+                  variant="danger"
+                  style={styles.actionButtonHalf}
+                />
+              </View>
+            )}
+          </View>
+        </ScrollView>
+      </View>
 
       {/* Modal ajout équipes */}
       <Modal
@@ -766,15 +774,33 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: Colors.background,
   },
-  backButton: {
-    padding: Spacing.sm,
-    marginLeft: Spacing.xs,
-  },
-  header: {
+  headerContainer: {
     backgroundColor: Colors.accent,
-    padding: Spacing.lg,
-    paddingTop: Spacing.md,
+  },
+  statusBarSpacer: {
+    height: 44,
+  },
+  headerBar: {
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: Spacing.sm,
+    height: 56,
+  },
+  headerButton: {
+    padding: Spacing.sm,
+    width: 48,
+  },
+  headerTitle: {
+    flex: 1,
+    fontSize: FontSizes.lg,
+    fontWeight: '600',
+    color: Colors.textInverse,
+    textAlign: 'center',
+  },
+  tournamentInfo: {
+    alignItems: 'center',
+    paddingVertical: Spacing.md,
     paddingBottom: Spacing.xl,
   },
   tournamentIcon: {
@@ -831,6 +857,9 @@ const styles = StyleSheet.create({
     color: Colors.success,
     fontSize: FontSizes.sm,
     fontWeight: '600',
+  },
+  scrollContent: {
+    flex: 1,
   },
   content: {
     padding: Spacing.md,

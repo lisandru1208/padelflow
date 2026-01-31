@@ -110,6 +110,17 @@ export async function createClub(token: string, name: string, city?: string): Pr
   return apiCall<Club>(url, { method: 'POST' }, token);
 }
 
+export async function updateClub(token: string, clubId: string, name?: string, city?: string): Promise<Club> {
+  let url = `/clubs/${clubId}?`;
+  if (name) url += `name=${encodeURIComponent(name)}&`;
+  if (city !== undefined) url += `city=${encodeURIComponent(city || '')}&`;
+  return apiCall<Club>(url, { method: 'PUT' }, token);
+}
+
+export async function deleteClub(token: string, clubId: string): Promise<void> {
+  return apiCall<void>(`/clubs/${clubId}`, { method: 'DELETE' }, token);
+}
+
 // ==================== COURTS ====================
 
 export interface Court {
@@ -131,6 +142,10 @@ export async function createCourt(
 ): Promise<Court> {
   const url = `/clubs/${clubId}/courts/?name=${encodeURIComponent(name)}&indoor=${indoor}`;
   return apiCall<Court>(url, { method: 'POST' }, token);
+}
+
+export async function deleteCourt(token: string, clubId: string, courtId: string): Promise<void> {
+  return apiCall<void>(`/clubs/${clubId}/courts/${courtId}`, { method: 'DELETE' }, token);
 }
 
 // ==================== TOURNAMENTS ====================
@@ -171,6 +186,10 @@ export async function createTournament(
     url += `&indoor=${data.indoor}`;
   }
   return apiCall<Tournament>(url, { method: 'POST' }, token);
+}
+
+export async function deleteTournament(token: string, clubId: string, tournamentId: string): Promise<void> {
+  return apiCall<void>(`/clubs/${clubId}/tournaments/${tournamentId}`, { method: 'DELETE' }, token);
 }
 
 // ==================== TEAMS ====================
@@ -315,6 +334,14 @@ export interface RoundWithMatches {
 export async function getRounds(token: string, tournamentId: string): Promise<RoundWithMatches[]> {
   return apiCall<RoundWithMatches[]>(
     `/tournaments/${tournamentId}/rounds`,
+    { method: 'GET' },
+    token
+  );
+}
+
+export async function getClassificationRounds(token: string, tournamentId: string): Promise<RoundWithMatches[]> {
+  return apiCall<RoundWithMatches[]>(
+    `/tournaments/${tournamentId}/classification-rounds`,
     { method: 'GET' },
     token
   );
