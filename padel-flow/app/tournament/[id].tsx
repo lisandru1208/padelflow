@@ -173,9 +173,6 @@ export default function TournamentDetailScreen() {
   };
 
   const resetTeamModal = () => {
-  };
-
-  const resetTeamModal = () => {
     setTeamForms([emptyTeam()]);
     setShowTeamModal(false);
   };
