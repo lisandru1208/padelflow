@@ -125,7 +125,9 @@ def get_match_data(db: Session, match: Match) -> dict:
             players1 = db.query(Player).filter(Player.team_id == team1.id).all()
             team1_data = {
                 "id": str(team1.id),
-                "seed": team1.seed,
+                "combined_ranking": team1.combined_ranking,
+                "is_seeded": team1.is_seeded,
+                "seed_position": team1.seed_position,
                 "players": [
                     {
                         "id": str(p.id),
@@ -145,7 +147,9 @@ def get_match_data(db: Session, match: Match) -> dict:
             players2 = db.query(Player).filter(Player.team_id == team2.id).all()
             team2_data = {
                 "id": str(team2.id),
-                "seed": team2.seed,
+                "combined_ranking": team2.combined_ranking,
+                "is_seeded": team2.is_seeded,
+                "seed_position": team2.seed_position,
                 "players": [
                     {
                         "id": str(p.id),
