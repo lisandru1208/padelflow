@@ -204,18 +204,35 @@ export interface Player {
 
 export interface Team {
   id: string;
-  seed?: number;
-  players: Player[];
   tournament_id: string;
+  combined_ranking?: number;
+  is_seeded: boolean;
+  seed_position?: number;
+  players: Player[];
 }
 
 export interface TeamCreate {
-  seed?: number;
   players: Omit<Player, 'id'>[];
+}
+
+export interface BracketInfo {
+  num_teams: number;
+  bracket_size: number;
+  num_byes: number;
+  bye_percentage: number;
+  num_seeds: number;
+  recommendation: 'bracket' | 'poule' | 'minimum';
+  message: string;
+  recommended_courts: number;
+  first_round_matches: number;
 }
 
 export async function getTeams(token: string, tournamentId: string): Promise<Team[]> {
   return apiCall<Team[]>(`/tournaments/${tournamentId}/teams/`, { method: 'GET' }, token);
+}
+
+export async function getBracketInfo(token: string, tournamentId: string): Promise<BracketInfo> {
+  return apiCall<BracketInfo>(`/tournaments/${tournamentId}/teams/bracket-info`, { method: 'GET' }, token);
 }
 
 export async function createTeam(

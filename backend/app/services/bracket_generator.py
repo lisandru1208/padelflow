@@ -1,231 +1,346 @@
-import math
-from app.models.round import Round
-from app.models.match import Match
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from pydantic import BaseModel
+from typing import List, Optional
+
+from app.db.deps import get_db
+from app.core.deps import get_current_user
 from app.models.team import Team
+from app.models.player import Player
+from app.models.tournament import Tournament
+from app.models.club_user import ClubUser
+
+router = APIRouter(
+    prefix="/tournaments/{tournament_id}/teams",
+    tags=["teams"]
+)
 
 
-def compute_bracket_size(num_teams: int) -> int:
-    """Calcule la taille du bracket (puissance de 2 supérieure ou égale)"""
-    if num_teams < 2:
-        return 2
-    return 2 ** math.ceil(math.log2(num_teams))
+# ----------- Schemas -----------
+
+class PlayerCreate(BaseModel):
+    first_name: str
+    last_name: str
+    license_number: str
+    ranking: int
 
 
-def generate_bracket(db, tournament_id: str):
-    teams = db.query(Team).filter(
-        Team.tournament_id == tournament_id
-    ).all()
+class TeamCreate(BaseModel):
+    players: List[PlayerCreate]
 
-    if len(teams) < 2:
-        raise ValueError("Minimum 2 teams required")
 
-    bracket_size = compute_bracket_size(len(teams))
-    round_count = int(math.log2(bracket_size))
+class PlayerResponse(BaseModel):
+    id: str
+    first_name: str
+    last_name: str
+    license_number: str
+    ranking: int
 
-    # Supprimer ancien tableau
-    existing_rounds = db.query(Round).filter(
-        Round.tournament_id == tournament_id
-    ).all()
+
+class TeamResponse(BaseModel):
+    id: str
+    tournament_id: str
+    combined_ranking: Optional[int]
+    is_seeded: bool
+    seed_position: Optional[int]
+    players: List[PlayerResponse]
+
+
+# ----------- Helpers -----------
+
+def check_ja_for_tournament(db: Session, tournament_id: str, user_id: str):
+    """Vérifie que l'utilisateur est JA du club du tournoi"""
+    tournament = db.query(Tournament).filter(Tournament.id == tournament_id).first()
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+
+    membership = db.query(ClubUser).filter(
+        ClubUser.club_id == tournament.club_id,
+        ClubUser.user_id == user_id
+    ).first()
+
+    if not membership:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    return tournament
+
+
+def calculate_seeds(db: Session, tournament_id: str):
+    """
+    Calcule automatiquement les têtes de série basées sur le classement combiné.
+    Les équipes avec le classement combiné le plus bas sont les meilleures.
+    """
+    teams = db.query(Team).filter(Team.tournament_id == tournament_id).all()
     
-    for r in existing_rounds:
-        db.query(Match).filter(Match.round_id == r.id).delete()
+    if not teams:
+        return
     
-    db.query(Round).filter(
-        Round.tournament_id == tournament_id
-    ).delete()
-
-    db.commit()
-
-    # ============================================
-    # WINNER BRACKET
-    # ============================================
+    # Calculer le nombre de têtes de série nécessaires
+    # Généralement, on prend 1/4 des équipes comme têtes de série (min 2, max 8)
+    num_teams = len(teams)
+    num_seeds = min(max(num_teams // 4, 2), 8)
     
-    winner_rounds = []
-    for i in range(round_count):
-        round_name = get_round_name(i + 1, round_count, is_loser=False)
-        r = Round(
-            tournament_id=tournament_id,
-            name=round_name,
-            order=i + 1
-        )
-        db.add(r)
-        db.commit()
-        db.refresh(r)
-        winner_rounds.append(r)
-
-    # Seeds
-    seeded = sorted(
-        [t for t in teams if t.seed is not None],
-        key=lambda t: t.seed
+    if num_teams <= 4:
+        num_seeds = 2
+    elif num_teams <= 8:
+        num_seeds = 4
+    elif num_teams <= 16:
+        num_seeds = 4
+    else:
+        num_seeds = 8
+    
+    # Trier les équipes par classement combiné (plus bas = meilleur)
+    teams_sorted = sorted(
+        [t for t in teams if t.combined_ranking is not None],
+        key=lambda t: t.combined_ranking
     )
-    unseeded = [t for t in teams if t.seed is None]
+    
+    # Réinitialiser toutes les têtes de série
+    for team in teams:
+        team.is_seeded = False
+        team.seed_position = None
+    
+    # Assigner les têtes de série
+    for i, team in enumerate(teams_sorted[:num_seeds]):
+        team.is_seeded = True
+        team.seed_position = i + 1
+    
+    db.commit()
 
-    slots = [None] * bracket_size
 
-    # Positions seeds
-    seed_positions = list(range(len(seeded)))
-    for team, pos in zip(seeded, seed_positions):
-        slots[pos] = team
+# ----------- Endpoints -----------
 
-    # Compléter avec non-seeds
-    idx = 0
-    for i in range(bracket_size):
-        if slots[i] is None and idx < len(unseeded):
-            slots[i] = unseeded[idx]
-            idx += 1
+@router.post("/", response_model=TeamResponse)
+def create_team(
+    tournament_id: str,
+    payload: TeamCreate,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user)
+):
+    tournament = check_ja_for_tournament(db, tournament_id, user.id)
 
-    # Créer matchs du premier round (winner)
-    first_round = winner_rounds[0]
-    for i in range(0, bracket_size, 2):
-        match = Match(
-            round_id=first_round.id,
-            match_order=(i // 2) + 1,
-            team1_id=slots[i].id if slots[i] else None,
-            team2_id=slots[i + 1].id if slots[i + 1] else None,
-            bracket_type='winner'
+    if tournament.bracket_generated:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot add teams after bracket is generated"
         )
-        db.add(match)
 
-    # Créer matchs vides pour les rounds suivants (winner)
-    matches_in_round = bracket_size // 2
-    for round_idx in range(1, round_count):
-        matches_in_round = matches_in_round // 2
-        current_round = winner_rounds[round_idx]
-        
-        for match_num in range(matches_in_round):
-            match = Match(
-                round_id=current_round.id,
-                match_order=match_num + 1,
-                team1_id=None,
-                team2_id=None,
-                bracket_type='winner'
-            )
-            db.add(match)
+    if len(payload.players) != 2:
+        raise HTTPException(status_code=400, detail="A team must have exactly 2 players")
+
+    # Calculer le classement combiné
+    combined_ranking = sum(p.ranking for p in payload.players)
+
+    # Créer l'équipe
+    team = Team(
+        tournament_id=tournament_id,
+        combined_ranking=combined_ranking,
+        is_seeded=False,
+        seed_position=None
+    )
+    db.add(team)
+    db.commit()
+    db.refresh(team)
+
+    # Créer les joueurs
+    players_db = []
+    for p in payload.players:
+        player = Player(
+            team_id=team.id,
+            first_name=p.first_name,
+            last_name=p.last_name,
+            license_number=p.license_number,
+            ranking=p.ranking
+        )
+        db.add(player)
+        players_db.append(player)
 
     db.commit()
 
-    # ============================================
-    # LOSER BRACKET (Matchs de classement)
-    # ============================================
-    
-    loser_rounds = []
-    
-    if round_count >= 2:
-        # Match pour la 3ème place (perdants des demi-finales)
-        r_3rd = Round(
-            tournament_id=tournament_id,
-            name="Match 3ème place",
-            order=100
-        )
-        db.add(r_3rd)
-        db.commit()
-        db.refresh(r_3rd)
-        loser_rounds.append(r_3rd)
-        
-        match_3rd = Match(
-            round_id=r_3rd.id,
-            match_order=1,
-            team1_id=None,
-            team2_id=None,
-            bracket_type='loser',
-            classification_rank=3
-        )
-        db.add(match_3rd)
-    
-    if round_count >= 3:
-        # Matchs pour 5-8ème place (perdants des quarts)
-        r_5th = Round(
-            tournament_id=tournament_id,
-            name="Matchs 5-8ème",
-            order=101
-        )
-        db.add(r_5th)
-        db.commit()
-        db.refresh(r_5th)
-        loser_rounds.append(r_5th)
-        
-        # Demi-finales du loser (2 matchs pour 8 équipes)
-        num_quarter_matches = bracket_size // 4
-        for i in range(num_quarter_matches):
-            match = Match(
-                round_id=r_5th.id,
-                match_order=i + 1,
-                team1_id=None,
-                team2_id=None,
-                bracket_type='loser',
-                classification_rank=5
-            )
-            db.add(match)
-        
-        # Match pour 5ème place
-        r_5th_final = Round(
-            tournament_id=tournament_id,
-            name="Match 5ème place",
-            order=102
-        )
-        db.add(r_5th_final)
-        db.commit()
-        db.refresh(r_5th_final)
-        loser_rounds.append(r_5th_final)
-        
-        match_5th = Match(
-            round_id=r_5th_final.id,
-            match_order=1,
-            team1_id=None,
-            team2_id=None,
-            bracket_type='loser',
-            classification_rank=5
-        )
-        db.add(match_5th)
-        
-        # Match pour 7ème place
-        r_7th = Round(
-            tournament_id=tournament_id,
-            name="Match 7ème place",
-            order=103
-        )
-        db.add(r_7th)
-        db.commit()
-        db.refresh(r_7th)
-        loser_rounds.append(r_7th)
-        
-        match_7th = Match(
-            round_id=r_7th.id,
-            match_order=1,
-            team1_id=None,
-            team2_id=None,
-            bracket_type='loser',
-            classification_rank=7
-        )
-        db.add(match_7th)
+    # Recalculer les têtes de série pour tout le tournoi
+    calculate_seeds(db, tournament_id)
 
-    db.commit()
+    # Rafraîchir l'équipe pour avoir les valeurs à jour
+    db.refresh(team)
 
     return {
-        "success": True,
-        "teams": len(teams),
-        "bracket_size": bracket_size,
-        "rounds": round_count,
-        "winner_rounds": len(winner_rounds),
-        "loser_rounds": len(loser_rounds),
-        "message": f"Bracket généré avec {len(teams)} équipes et matchs de classement"
+        "id": str(team.id),
+        "tournament_id": str(team.tournament_id),
+        "combined_ranking": team.combined_ranking,
+        "is_seeded": team.is_seeded,
+        "seed_position": team.seed_position,
+        "players": [
+            {
+                "id": str(p.id),
+                "first_name": p.first_name,
+                "last_name": p.last_name,
+                "license_number": p.license_number,
+                "ranking": p.ranking
+            }
+            for p in players_db
+        ]
     }
 
 
-def get_round_name(round_number: int, total_rounds: int, is_loser: bool = False) -> str:
-    """Retourne le nom du round"""
-    remaining = total_rounds - round_number
+@router.get("/", response_model=List[TeamResponse])
+def list_teams(
+    tournament_id: str,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user)
+):
+    check_ja_for_tournament(db, tournament_id, user.id)
+
+    teams = db.query(Team).filter(Team.tournament_id == tournament_id).all()
+
+    result = []
+    for team in teams:
+        players = db.query(Player).filter(Player.team_id == team.id).all()
+        result.append({
+            "id": str(team.id),
+            "tournament_id": str(team.tournament_id),
+            "combined_ranking": team.combined_ranking,
+            "is_seeded": team.is_seeded,
+            "seed_position": team.seed_position,
+            "players": [
+                {
+                    "id": str(p.id),
+                    "first_name": p.first_name,
+                    "last_name": p.last_name,
+                    "license_number": p.license_number,
+                    "ranking": p.ranking
+                }
+                for p in players
+            ]
+        })
+
+    # Trier par classement combiné (meilleurs en premier)
+    result.sort(key=lambda t: t["combined_ranking"] if t["combined_ranking"] else 9999)
+
+    return result
+
+
+@router.delete("/{team_id}")
+def delete_team(
+    tournament_id: str,
+    team_id: str,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user)
+):
+    tournament = check_ja_for_tournament(db, tournament_id, user.id)
+
+    if tournament.bracket_generated:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot delete teams after bracket is generated"
+        )
+
+    team = db.query(Team).filter(
+        Team.id == team_id,
+        Team.tournament_id == tournament_id
+    ).first()
+
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+
+    # Supprimer les joueurs
+    db.query(Player).filter(Player.team_id == team_id).delete()
     
-    if is_loser:
-        return f"Classement Tour {round_number}"
+    # Supprimer l'équipe
+    db.delete(team)
+    db.commit()
+
+    # Recalculer les têtes de série
+    calculate_seeds(db, tournament_id)
+
+    return {"message": "Team deleted"}
+
+
+@router.post("/recalculate-seeds")
+def recalculate_seeds(
+    tournament_id: str,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user)
+):
+    """Recalcule manuellement les têtes de série"""
+    tournament = check_ja_for_tournament(db, tournament_id, user.id)
+
+    if tournament.bracket_generated:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot recalculate seeds after bracket is generated"
+        )
+
+    calculate_seeds(db, tournament_id)
+
+    return {"message": "Seeds recalculated"}
+
+
+@router.get("/bracket-info")
+def get_bracket_info(
+    tournament_id: str,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user)
+):
+    """
+    Retourne des informations utiles pour la génération du bracket :
+    - Nombre d'équipes
+    - Taille du bracket (puissance de 2)
+    - Nombre de BYE nécessaires
+    - Nombre de têtes de série
+    - Recommandation (bracket ou poule)
+    - Nombre de terrains recommandé
+    """
+    import math
     
-    if remaining == 0:
-        return "Finale"
-    elif remaining == 1:
-        return "Demi-finales"
-    elif remaining == 2:
-        return "Quarts de finale"
-    elif remaining == 3:
-        return "Huitièmes de finale"
+    check_ja_for_tournament(db, tournament_id, user.id)
+
+    teams = db.query(Team).filter(Team.tournament_id == tournament_id).all()
+    num_teams = len(teams)
+
+    if num_teams < 2:
+        return {
+            "num_teams": num_teams,
+            "bracket_size": 0,
+            "num_byes": 0,
+            "num_seeds": 0,
+            "recommendation": "minimum",
+            "message": "Il faut au moins 2 équipes",
+            "recommended_courts": 1
+        }
+
+    # Calculer la taille du bracket
+    bracket_size = 2 ** math.ceil(math.log2(num_teams))
+    num_byes = bracket_size - num_teams
+    bye_percentage = (num_byes / bracket_size) * 100
+
+    # Nombre de têtes de série
+    seeded_teams = [t for t in teams if t.is_seeded]
+    num_seeds = len(seeded_teams)
+
+    # Recommandation
+    if num_teams <= 3:
+        recommendation = "poule"
+        message = f"Avec {num_teams} équipes, un format poule est recommandé"
+    elif bye_percentage > 40:
+        recommendation = "poule"
+        message = f"Trop de BYE ({num_byes}). Un format poule est recommandé"
     else:
-        return f"Tour {round_number}"
+        recommendation = "bracket"
+        message = f"Format bracket avec {num_byes} BYE"
+
+    # Nombre de terrains recommandé
+    # Règle : environ 1 terrain pour 4 équipes, min 1, max selon nombre de matchs simultanés possibles
+    first_round_matches = bracket_size // 2
+    recommended_courts = max(1, min(first_round_matches, num_teams // 4))
+
+    return {
+        "num_teams": num_teams,
+        "bracket_size": bracket_size,
+        "num_byes": num_byes,
+        "bye_percentage": round(bye_percentage, 1),
+        "num_seeds": num_seeds,
+        "recommendation": recommendation,
+        "message": message,
+        "recommended_courts": recommended_courts,
+        "first_round_matches": first_round_matches
+    }

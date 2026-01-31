@@ -20,6 +20,7 @@ import {
   getCourts,
   getTeams,
   getTournamentInfo,
+  getBracketInfo,
   createTeam,
   deleteTeam,
   generateBracket,
@@ -29,6 +30,7 @@ import {
   TeamCreate,
   Player,
   TournamentInfo,
+  BracketInfo,
 } from '../../services/api';
 import { Button, Input, Card } from '../../components';
 import { Colors, Spacing, FontSizes, BorderRadius } from '../../constants/theme';
@@ -44,7 +46,6 @@ interface PlayerForm {
 // Type pour une équipe en cours de saisie
 interface TeamForm {
   id: string;
-  seed: string;
   player1: PlayerForm;
   player2: PlayerForm;
 }
@@ -58,7 +59,6 @@ const emptyPlayer = (): PlayerForm => ({
 
 const emptyTeam = (): TeamForm => ({
   id: Date.now().toString(),
-  seed: '',
   player1: emptyPlayer(),
   player2: emptyPlayer(),
 });
@@ -71,6 +71,7 @@ export default function TournamentDetailScreen() {
   const [courts, setCourts] = useState<Court[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
   const [selectedCourts, setSelectedCourts] = useState<string[]>([]);
+  const [bracketInfo, setBracketInfo] = useState<BracketInfo | null>(null);
   
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -109,6 +110,12 @@ export default function TournamentDetailScreen() {
       try {
         const teamsData = await getTeams(token, id);
         setTeams(Array.isArray(teamsData) ? teamsData : []);
+        
+        // Récupérer les infos du bracket si équipes > 0
+        if (teamsData && teamsData.length > 0) {
+          const info = await getBracketInfo(token, id);
+          setBracketInfo(info);
+        }
       } catch (e) {
         console.log('Pas d\'équipes ou erreur:', e);
         setTeams([]);
@@ -165,12 +172,7 @@ export default function TournamentDetailScreen() {
     );
   };
 
-  const updateTeamSeed = (formId: string, value: string) => {
-    setTeamForms(
-      teamForms.map((f) =>
-        f.id === formId ? { ...f, seed: value } : f
-      )
-    );
+  const resetTeamModal = () => {
   };
 
   const resetTeamModal = () => {
@@ -207,7 +209,6 @@ export default function TournamentDetailScreen() {
     try {
       for (const form of validForms) {
         const teamData: TeamCreate = {
-          seed: form.seed ? parseInt(form.seed) : undefined,
           players: [
             {
               first_name: form.player1.first_name.trim(),
@@ -370,6 +371,13 @@ export default function TournamentDetailScreen() {
     return 'Équipe incomplète';
   };
 
+  const getPlayersRankingDisplay = (team: Team) => {
+    if (team.players && team.players.length >= 2) {
+      return `${team.players[0].ranking} + ${team.players[1].ranking} = ${team.combined_ranking}`;
+    }
+    return '';
+  };
+
   if (isLoading) {
     return (
       <SafeAreaView style={styles.loadingContainer}>
@@ -449,100 +457,152 @@ export default function TournamentDetailScreen() {
             />
           }
         >
-          {/* Section Équipes */}
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>Équipes ({teams.length})</Text>
-              {!tournament.bracket_generated && (
-                <TouchableOpacity
-                  style={styles.addButton}
-                  onPress={() => setShowTeamModal(true)}
-                >
-                  <Ionicons name="add-circle" size={28} color={Colors.primary} />
-                </TouchableOpacity>
-              )}
-            </View>
-
-            {teams.length === 0 ? (
-              <Card variant="outlined" style={styles.emptyCard}>
-                <Ionicons name="people-outline" size={40} color={Colors.textLight} />
-                <Text style={styles.emptyText}>Aucune équipe</Text>
-                <Text style={styles.emptySubtext}>Ajoutez les équipes participantes</Text>
-              </Card>
-            ) : (
-              teams.map((team, index) => (
-                <Card key={team.id} variant="elevated" style={styles.teamCard}>
-                  <View style={styles.teamRow}>
-                    <View style={styles.seedBadge}>
-                      <Text style={styles.seedText}>{team.seed || index + 1}</Text>
-                    </View>
-                    <View style={styles.teamInfo}>
-                      <Text style={styles.teamName}>{getTeamDisplay(team)}</Text>
-                      <Text style={styles.teamPlayers}>
-                        {team.players ? team.players.map(getPlayerName).join(' & ') : 'Joueurs non définis'}
-                      </Text>
-                    </View>
-                    {!tournament.bracket_generated && (
-                      <TouchableOpacity
-                        onPress={() => handleDeleteTeam(team.id)}
-                        style={styles.deleteButton}
-                      >
-                        <Ionicons name="trash-outline" size={20} color={Colors.error} />
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                </Card>
-              ))
-            )}
-          </View>
-
-          {/* Section Courts sélectionnés */}
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>
-                Courts {tournament.indoor ? '(Indoor)' : '(Outdoor)'} ({selectedCourts.length})
-              </Text>
-              {!tournament.bracket_generated && (
-                <TouchableOpacity
-                  style={styles.addButton}
-                  onPress={() => setShowCourtsModal(true)}
-                >
-                  <Ionicons name="tennisball" size={24} color={Colors.primary} />
-                </TouchableOpacity>
-              )}
-            </View>
-
-            {selectedCourts.length === 0 ? (
-              <Card variant="outlined" style={styles.emptyCard}>
-                <Ionicons name="tennisball-outline" size={40} color={Colors.textLight} />
-                <Text style={styles.emptyText}>Aucun court sélectionné</Text>
-                <Text style={styles.emptySubtext}>
-                  {courts.length === 0 
-                    ? `Aucun court ${tournament.indoor ? 'indoor' : 'outdoor'} disponible` 
-                    : 'Sélectionnez les courts pour le tournoi'}
-                </Text>
-              </Card>
-            ) : (
-              <View style={styles.courtsRow}>
-                {selectedCourts
-                  .map((courtId) => courts.find((c) => c.id === courtId))
-                  .filter((court): court is Court => court !== undefined)
-                  .map((court) => (
-                    <View key={court.id} style={styles.selectedCourtChip}>
-                      <Ionicons
-                        name={court.indoor ? 'home' : 'sunny'}
-                        size={16}
-                        color={Colors.primary}
-                      />
-                      <Text style={styles.selectedCourtText}>{court.name}</Text>
-                    </View>
-                  ))}
-              </View>
-            )}
-          </View>
-
-          {/* Boutons d'action */}
           <View style={styles.content}>
+            {/* Section Équipes */}
+            <View style={styles.section}>
+              <View style={styles.sectionHeader}>
+                <Text style={styles.sectionTitle}>Équipes ({teams.length})</Text>
+                {!tournament.bracket_generated && (
+                  <TouchableOpacity
+                    style={styles.addButton}
+                    onPress={() => setShowTeamModal(true)}
+                  >
+                    <Ionicons name="add-circle" size={28} color={Colors.primary} />
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              {teams.length === 0 ? (
+                <Card variant="outlined" style={styles.emptyCard}>
+                  <Ionicons name="people-outline" size={40} color={Colors.textLight} />
+                  <Text style={styles.emptyText}>Aucune équipe</Text>
+                  <Text style={styles.emptySubtext}>Ajoutez les équipes participantes</Text>
+                </Card>
+              ) : (
+                <>
+                  {/* Info bracket si équipes > 1 */}
+                  {bracketInfo && teams.length >= 2 && (
+                    <Card variant="outlined" style={styles.bracketInfoCard}>
+                      <View style={styles.bracketInfoRow}>
+                        <View style={styles.bracketInfoItem}>
+                          <Text style={styles.bracketInfoValue}>{bracketInfo.bracket_size}</Text>
+                          <Text style={styles.bracketInfoLabel}>Bracket</Text>
+                        </View>
+                        <View style={styles.bracketInfoItem}>
+                          <Text style={styles.bracketInfoValue}>{bracketInfo.num_byes}</Text>
+                          <Text style={styles.bracketInfoLabel}>BYE</Text>
+                        </View>
+                        <View style={styles.bracketInfoItem}>
+                          <Text style={styles.bracketInfoValue}>{bracketInfo.num_seeds}</Text>
+                          <Text style={styles.bracketInfoLabel}>Têtes série</Text>
+                        </View>
+                        <View style={styles.bracketInfoItem}>
+                          <Text style={styles.bracketInfoValue}>{bracketInfo.recommended_courts}</Text>
+                          <Text style={styles.bracketInfoLabel}>Courts rec.</Text>
+                        </View>
+                      </View>
+                      {bracketInfo.recommendation === 'poule' && (
+                        <View style={styles.warningBanner}>
+                          <Ionicons name="warning" size={16} color={Colors.warning} />
+                          <Text style={styles.warningText}>{bracketInfo.message}</Text>
+                        </View>
+                      )}
+                    </Card>
+                  )}
+
+                  {teams.map((team, index) => (
+                    <Card key={team.id} variant="elevated" style={[
+                      styles.teamCard,
+                      team.is_seeded && styles.teamCardSeeded
+                    ]}>
+                      <View style={styles.teamRow}>
+                        <View style={[
+                          styles.seedBadge,
+                          team.is_seeded && styles.seedBadgeSeeded
+                        ]}>
+                          {team.is_seeded ? (
+                            <Text style={styles.seedText}>T{team.seed_position}</Text>
+                          ) : (
+                            <Text style={styles.seedText}>{index + 1}</Text>
+                          )}
+                        </View>
+                        <View style={styles.teamInfo}>
+                          <View style={styles.teamNameRow}>
+                            <Text style={styles.teamName}>{getTeamDisplay(team)}</Text>
+                            {team.is_seeded && (
+                              <View style={styles.seededBadge}>
+                                <Ionicons name="star" size={12} color={Colors.accent} />
+                              </View>
+                            )}
+                          </View>
+                          <Text style={styles.teamPlayers}>
+                            {team.players ? team.players.map(getPlayerName).join(' & ') : 'Joueurs non définis'}
+                          </Text>
+                          <Text style={styles.teamRanking}>
+                            Classement : {getPlayersRankingDisplay(team)}
+                          </Text>
+                        </View>
+                        {!tournament.bracket_generated && (
+                          <TouchableOpacity
+                            onPress={() => handleDeleteTeam(team.id)}
+                            style={styles.deleteButton}
+                          >
+                            <Ionicons name="trash-outline" size={20} color={Colors.error} />
+                          </TouchableOpacity>
+                        )}
+                      </View>
+                    </Card>
+                  ))}
+                </>
+              )}
+            </View>
+
+            {/* Section Courts sélectionnés */}
+            <View style={styles.section}>
+              <View style={styles.sectionHeader}>
+                <Text style={styles.sectionTitle}>
+                  Courts {tournament.indoor ? '(Indoor)' : '(Outdoor)'} ({selectedCourts.length})
+                </Text>
+                {!tournament.bracket_generated && (
+                  <TouchableOpacity
+                    style={styles.addButton}
+                    onPress={() => setShowCourtsModal(true)}
+                  >
+                    <Ionicons name="tennisball" size={24} color={Colors.primary} />
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              {selectedCourts.length === 0 ? (
+                <Card variant="outlined" style={styles.emptyCard}>
+                  <Ionicons name="tennisball-outline" size={40} color={Colors.textLight} />
+                  <Text style={styles.emptyText}>Aucun court sélectionné</Text>
+                  <Text style={styles.emptySubtext}>
+                    {courts.length === 0 
+                      ? `Aucun court ${tournament.indoor ? 'indoor' : 'outdoor'} disponible` 
+                      : 'Sélectionnez les courts pour le tournoi'}
+                  </Text>
+                </Card>
+              ) : (
+                <View style={styles.courtsRow}>
+                  {selectedCourts
+                    .map((courtId) => courts.find((c) => c.id === courtId))
+                    .filter((court): court is Court => court !== undefined)
+                    .map((court) => (
+                      <View key={court.id} style={styles.selectedCourtChip}>
+                        <Ionicons
+                          name={court.indoor ? 'home' : 'sunny'}
+                          size={16}
+                          color={Colors.primary}
+                        />
+                        <Text style={styles.selectedCourtText}>{court.name}</Text>
+                      </View>
+                    ))}
+                </View>
+              )}
+            </View>
+
+            {/* Boutons d'action */}
             {!tournament.bracket_generated ? (
               <Button
                 title="Générer le bracket"
@@ -596,14 +656,6 @@ export default function TournamentDetailScreen() {
                       </TouchableOpacity>
                     )}
                   </View>
-
-                  <Input
-                    placeholder="Tête de série (optionnel)"
-                    value={form.seed}
-                    onChangeText={(v) => updateTeamSeed(form.id, v)}
-                    keyboardType="numeric"
-                    leftIcon="ribbon-outline"
-                  />
 
                   <Text style={styles.playerLabel}>Joueur 1</Text>
                   <View style={styles.playerRow}>
@@ -904,22 +956,39 @@ const styles = StyleSheet.create({
   teamCard: {
     marginBottom: Spacing.sm,
   },
+  teamCardSeeded: {
+    borderLeftWidth: 3,
+    borderLeftColor: Colors.accent,
+  },
   teamRow: {
     flexDirection: 'row',
     alignItems: 'center',
   },
+  teamNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+  },
   seedBadge: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: Colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
   },
+  seedBadgeSeeded: {
+    backgroundColor: Colors.accent,
+  },
+  seededBadge: {
+    backgroundColor: Colors.warningLight,
+    borderRadius: 10,
+    padding: 2,
+  },
   seedText: {
     color: Colors.textInverse,
     fontWeight: 'bold',
-    fontSize: FontSizes.sm,
+    fontSize: FontSizes.xs,
   },
   teamInfo: {
     flex: 1,
@@ -934,6 +1003,45 @@ const styles = StyleSheet.create({
     fontSize: FontSizes.sm,
     color: Colors.textSecondary,
     marginTop: 2,
+  },
+  teamRanking: {
+    fontSize: FontSizes.xs,
+    color: Colors.textLight,
+    marginTop: 2,
+  },
+  bracketInfoCard: {
+    marginBottom: Spacing.md,
+    padding: Spacing.md,
+  },
+  bracketInfoRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+  },
+  bracketInfoItem: {
+    alignItems: 'center',
+  },
+  bracketInfoValue: {
+    fontSize: FontSizes.xl,
+    fontWeight: 'bold',
+    color: Colors.primary,
+  },
+  bracketInfoLabel: {
+    fontSize: FontSizes.xs,
+    color: Colors.textSecondary,
+  },
+  warningBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.warningLight,
+    padding: Spacing.sm,
+    borderRadius: BorderRadius.sm,
+    marginTop: Spacing.sm,
+    gap: Spacing.xs,
+  },
+  warningText: {
+    flex: 1,
+    fontSize: FontSizes.sm,
+    color: Colors.warning,
   },
   deleteButton: {
     padding: Spacing.sm,
