@@ -11,8 +11,8 @@ import {
   TouchableOpacity,
   Alert,
   Modal,
+  SafeAreaView,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router, Stack, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../context/AuthContext';
@@ -21,16 +21,21 @@ import {
   getTeams,
   getTournamentInfo,
   getBracketInfo,
+  getPoolConfig,
   createTeam,
   deleteTeam,
   generateBracket,
+  generatePools,
   deleteBracket,
+  resetPools,
+  getPools,
   Court,
   Team,
   TeamCreate,
   Player,
   TournamentInfo,
   BracketInfo,
+  PoolConfig,
 } from '../../services/api';
 import { Button, Input, Card } from '../../components';
 import { Colors, Spacing, FontSizes, BorderRadius } from '../../constants/theme';
@@ -72,6 +77,8 @@ export default function TournamentDetailScreen() {
   const [teams, setTeams] = useState<Team[]>([]);
   const [selectedCourts, setSelectedCourts] = useState<string[]>([]);
   const [bracketInfo, setBracketInfo] = useState<BracketInfo | null>(null);
+  const [poolConfig, setPoolConfig] = useState<PoolConfig | null>(null);
+  const [hasPools, setHasPools] = useState(false);
   
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -83,6 +90,10 @@ export default function TournamentDetailScreen() {
 
   // Modal sélection courts
   const [showCourtsModal, setShowCourtsModal] = useState(false);
+
+  // Modal choix format (bracket ou poules)
+  const [showFormatModal, setShowFormatModal] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
 
   const fetchData = async () => {
     if (!token || !id || !clubId) return;
@@ -111,10 +122,26 @@ export default function TournamentDetailScreen() {
         const teamsData = await getTeams(token, id);
         setTeams(Array.isArray(teamsData) ? teamsData : []);
         
-        // Récupérer les infos du bracket si équipes > 0
+        // Récupérer les infos du bracket et des poules si équipes > 0
         if (teamsData && teamsData.length > 0) {
           const info = await getBracketInfo(token, id);
           setBracketInfo(info);
+          
+          // Récupérer la config des poules
+          if (teamsData.length >= 4) {
+            const pConfig = await getPoolConfig(token, id);
+            setPoolConfig(pConfig);
+          }
+        }
+        
+        // Vérifier si des poules existent
+        if (tournamentData.bracket_generated) {
+          try {
+            const poolsData = await getPools(token, id);
+            setHasPools(poolsData && poolsData.length > 0);
+          } catch {
+            setHasPools(false);
+          }
         }
       } catch (e) {
         console.log('Pas d\'équipes ou erreur:', e);
@@ -281,7 +308,7 @@ export default function TournamentDetailScreen() {
     }
   };
 
-  // ===== GÉNÉRATION DU BRACKET =====
+  // ===== GÉNÉRATION DU BRACKET / POULES =====
 
   const handleGenerateBracket = async () => {
     if (teams.length < 2) {
@@ -294,18 +321,30 @@ export default function TournamentDetailScreen() {
       return;
     }
 
+    // Si assez d'équipes pour les poules, proposer le choix
+    if (teams.length >= 4 && poolConfig?.can_use_pools) {
+      setShowFormatModal(true);
+    } else {
+      // Sinon, générer directement en bracket
+      confirmGenerateBracket();
+    }
+  };
+
+  const confirmGenerateBracket = () => {
     if (!token || !id) return;
 
     Alert.alert(
       'Générer le bracket',
-      `Générer le bracket avec ${teams.length} équipes et ${selectedCourts.length} court(s) ?\n\nLes courts seront automatiquement assignés aux matchs.`,
+      `Générer le bracket avec ${teams.length} équipes et ${selectedCourts.length} court(s) ?\n\nLes têtes de série auront des BYE en priorité.`,
       [
         { text: 'Annuler', style: 'cancel' },
         {
           text: 'Générer',
           onPress: async () => {
+            setIsGenerating(true);
             try {
               await generateBracket(token, id, selectedCourts);
+              setShowFormatModal(false);
               fetchData();
               Alert.alert('Succès', 'Bracket généré avec succès !', [
                 {
@@ -315,6 +354,8 @@ export default function TournamentDetailScreen() {
               ]);
             } catch (e: any) {
               Alert.alert('Erreur', e.message || 'Impossible de générer le bracket');
+            } finally {
+              setIsGenerating(false);
             }
           },
         },
@@ -322,10 +363,36 @@ export default function TournamentDetailScreen() {
     );
   };
 
+  const confirmGeneratePools = async () => {
+    if (!token || !id) return;
+
+    setIsGenerating(true);
+    try {
+      await generatePools(token, id, selectedCourts);
+      setShowFormatModal(false);
+      fetchData();
+      Alert.alert('Succès', 'Poules générées avec succès !', [
+        {
+          text: 'Voir les poules',
+          onPress: () => router.push(`/tournament/${id}/pools?clubId=${clubId}`),
+        },
+      ]);
+    } catch (e: any) {
+      Alert.alert('Erreur', e.message || 'Impossible de générer les poules');
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
   const handleResetBracket = () => {
+    const title = hasPools ? 'Réinitialiser les poules' : 'Réinitialiser le bracket';
+    const message = hasPools 
+      ? 'Êtes-vous sûr ? Toutes les poules, matchs et scores seront supprimés.'
+      : 'Êtes-vous sûr ? Tous les matchs et scores seront supprimés.';
+    
     Alert.alert(
-      'Réinitialiser le bracket',
-      'Êtes-vous sûr ? Tous les matchs et scores seront supprimés.',
+      title,
+      message,
       [
         { text: 'Annuler', style: 'cancel' },
         {
@@ -334,12 +401,17 @@ export default function TournamentDetailScreen() {
           onPress: async () => {
             if (!token || !id) return;
             try {
-              await deleteBracket(token, id);
+              if (hasPools) {
+                await resetPools(token, id);
+              } else {
+                await deleteBracket(token, id);
+              }
               setSelectedCourts([]);
+              setHasPools(false);
               fetchData();
-              Alert.alert('Succès', 'Bracket réinitialisé');
+              Alert.alert('Succès', hasPools ? 'Poules réinitialisées' : 'Bracket réinitialisé');
             } catch (e: any) {
-              Alert.alert('Erreur', e.message || 'Impossible de réinitialiser le bracket');
+              Alert.alert('Erreur', e.message || 'Impossible de réinitialiser');
             }
           },
         },
@@ -610,8 +682,14 @@ export default function TournamentDetailScreen() {
             ) : (
               <View style={styles.actionButtons}>
                 <Button
-                  title="Voir le bracket"
-                  onPress={() => router.push(`/tournament/${id}/bracket?clubId=${clubId}`)}
+                  title={hasPools ? "Voir les poules" : "Voir le bracket"}
+                  onPress={() => {
+                    if (hasPools) {
+                      router.push(`/tournament/${id}/pools?clubId=${clubId}`);
+                    } else {
+                      router.push(`/tournament/${id}/bracket?clubId=${clubId}`);
+                    }
+                  }}
                   style={styles.actionButtonHalf}
                 />
                 <Button
@@ -625,6 +703,79 @@ export default function TournamentDetailScreen() {
           </View>
         </ScrollView>
       </View>
+
+      {/* Modal choix format (bracket ou poules) */}
+      <Modal
+        visible={showFormatModal}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setShowFormatModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Choisir le format</Text>
+              <TouchableOpacity onPress={() => setShowFormatModal(false)}>
+                <Ionicons name="close" size={24} color={Colors.text} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.formatOptions}>
+              {/* Option Bracket */}
+              <TouchableOpacity
+                style={styles.formatOption}
+                onPress={confirmGenerateBracket}
+                disabled={isGenerating}
+              >
+                <View style={styles.formatIconContainer}>
+                  <Ionicons name="git-branch" size={40} color={Colors.primary} />
+                </View>
+                <Text style={styles.formatTitle}>Bracket direct</Text>
+                <Text style={styles.formatDescription}>
+                  Élimination directe avec {bracketInfo?.num_byes || 0} BYE
+                </Text>
+                {bracketInfo && bracketInfo.num_byes > teams.length / 2 && (
+                  <View style={styles.formatWarning}>
+                    <Ionicons name="warning" size={14} color={Colors.warning} />
+                    <Text style={styles.formatWarningText}>Beaucoup de BYE</Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+
+              {/* Option Poules */}
+              {poolConfig?.can_use_pools && (
+                <TouchableOpacity
+                  style={[styles.formatOption, poolConfig.recommended && styles.formatOptionRecommended]}
+                  onPress={confirmGeneratePools}
+                  disabled={isGenerating}
+                >
+                  {poolConfig.recommended && (
+                    <View style={styles.recommendedBadge}>
+                      <Text style={styles.recommendedText}>Recommandé</Text>
+                    </View>
+                  )}
+                  <View style={styles.formatIconContainer}>
+                    <Ionicons name="grid" size={40} color={Colors.accent} />
+                  </View>
+                  <Text style={styles.formatTitle}>Poules + Phase finale</Text>
+                  <Text style={styles.formatDescription}>
+                    {poolConfig.num_pools} poules → {poolConfig.final_phase === 'quarts' ? 'Quarts de finale' : 'Huitièmes'}
+                  </Text>
+                  <Text style={styles.formatSubtext}>
+                    {poolConfig.message}
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {isGenerating && (
+              <View style={styles.generatingContainer}>
+                <Text style={styles.generatingText}>Génération en cours...</Text>
+              </View>
+            )}
+          </View>
+        </View>
+      </Modal>
 
       {/* Modal ajout équipes */}
       <Modal
@@ -1190,5 +1341,82 @@ const styles = StyleSheet.create({
   },
   confirmButton: {
     marginTop: Spacing.md,
+  },
+  // Styles pour le modal de choix du format
+  formatOptions: {
+    gap: Spacing.md,
+  },
+  formatOption: {
+    backgroundColor: Colors.surface,
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.lg,
+    borderWidth: 2,
+    borderColor: Colors.border,
+    alignItems: 'center',
+  },
+  formatOptionRecommended: {
+    borderColor: Colors.accent,
+  },
+  formatIconContainer: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: Colors.surfaceSecondary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: Spacing.md,
+  },
+  formatTitle: {
+    fontSize: FontSizes.lg,
+    fontWeight: 'bold',
+    color: Colors.text,
+    marginBottom: Spacing.xs,
+  },
+  formatDescription: {
+    fontSize: FontSizes.md,
+    color: Colors.textSecondary,
+    textAlign: 'center',
+  },
+  formatSubtext: {
+    fontSize: FontSizes.sm,
+    color: Colors.textLight,
+    textAlign: 'center',
+    marginTop: Spacing.xs,
+  },
+  formatWarning: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+    marginTop: Spacing.sm,
+    backgroundColor: Colors.warningLight,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: Spacing.xs,
+    borderRadius: BorderRadius.sm,
+  },
+  formatWarningText: {
+    fontSize: FontSizes.sm,
+    color: Colors.warning,
+  },
+  recommendedBadge: {
+    position: 'absolute',
+    top: -10,
+    right: 10,
+    backgroundColor: Colors.accent,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.xs,
+    borderRadius: BorderRadius.full,
+  },
+  recommendedText: {
+    fontSize: FontSizes.xs,
+    fontWeight: 'bold',
+    color: Colors.textInverse,
+  },
+  generatingContainer: {
+    alignItems: 'center',
+    padding: Spacing.md,
+  },
+  generatingText: {
+    fontSize: FontSizes.md,
+    color: Colors.textSecondary,
   },
 });

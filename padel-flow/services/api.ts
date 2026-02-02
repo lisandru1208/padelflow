@@ -438,4 +438,151 @@ export async function submitScore(
   );
 }
 
+// ==================== POOLS ====================
+
+export interface PoolConfig {
+  num_teams: number;
+  can_use_pools: boolean;
+  num_pools?: number;
+  teams_per_pool?: number[];
+  qualifiers_per_pool?: number;
+  total_qualifiers?: number;
+  final_phase?: string;
+  recommended?: boolean;
+  message: string;
+}
+
+export interface PoolTeamStats {
+  matches_played: number;
+  matches_won: number;
+  matches_lost: number;
+  sets_won: number;
+  sets_lost: number;
+  games_won: number;
+  games_lost: number;
+  points: number;
+}
+
+export interface PoolTeamData {
+  pool_team_id: string;
+  team_id: string;
+  combined_ranking: number;
+  is_seeded: boolean;
+  seed_position?: number;
+  players: Player[];
+  stats: PoolTeamStats;
+  rank: number;
+}
+
+export interface PoolMatchData {
+  id: string;
+  match_order: number;
+  team1_id: string;
+  team2_id: string;
+  team1: {
+    id: string;
+    players: { first_name: string; last_name: string }[];
+  } | null;
+  team2: {
+    id: string;
+    players: { first_name: string; last_name: string }[];
+  } | null;
+  score: string | null;
+  winner_id: string | null;
+  is_finished: boolean;
+  court: { id: string; name: string } | null;
+}
+
+export interface PoolData {
+  id: string;
+  name: string;
+  pool_order: number;
+  teams: PoolTeamData[];
+  matches: PoolMatchData[];
+  progress: {
+    total: number;
+    finished: number;
+    percentage: number;
+  };
+}
+
+export async function getPoolConfig(token: string, tournamentId: string): Promise<PoolConfig> {
+  return apiCall<PoolConfig>(
+    `/tournaments/${tournamentId}/pools/config`,
+    { method: 'GET' },
+    token
+  );
+}
+
+export async function generatePools(
+  token: string,
+  tournamentId: string,
+  courtIds?: string[]
+): Promise<any> {
+  return apiCall(
+    `/tournaments/${tournamentId}/pools/generate`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ court_ids: courtIds }),
+    },
+    token
+  );
+}
+
+export async function getPools(token: string, tournamentId: string): Promise<PoolData[]> {
+  return apiCall<PoolData[]>(
+    `/tournaments/${tournamentId}/pools/`,
+    { method: 'GET' },
+    token
+  );
+}
+
+export interface PoolScoreInput {
+  score: string;
+  winner_team_id: string;
+  team1_sets: number;
+  team2_sets: number;
+  team1_games: number;
+  team2_games: number;
+}
+
+export async function submitPoolScore(
+  token: string,
+  tournamentId: string,
+  matchId: string,
+  scoreData: PoolScoreInput
+): Promise<any> {
+  return apiCall(
+    `/tournaments/${tournamentId}/pools/matches/${matchId}/score`,
+    {
+      method: 'POST',
+      body: JSON.stringify(scoreData),
+    },
+    token
+  );
+}
+
+export async function generateFinalPhase(
+  token: string,
+  tournamentId: string,
+  courtIds?: string[]
+): Promise<any> {
+  return apiCall(
+    `/tournaments/${tournamentId}/pools/generate-final-phase`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ court_ids: courtIds }),
+    },
+    token
+  );
+}
+
+export async function resetPools(token: string, tournamentId: string): Promise<void> {
+  return apiCall<void>(
+    `/tournaments/${tournamentId}/pools/reset`,
+    { method: 'DELETE' },
+    token
+  );
+}
+
 export { API_BASE_URL };
