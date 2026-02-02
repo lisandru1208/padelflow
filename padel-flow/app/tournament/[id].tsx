@@ -385,14 +385,9 @@ export default function TournamentDetailScreen() {
   };
 
   const handleResetBracket = () => {
-    const title = hasPools ? 'Réinitialiser les poules' : 'Réinitialiser le bracket';
-    const message = hasPools 
-      ? 'Êtes-vous sûr ? Toutes les poules, matchs et scores seront supprimés.'
-      : 'Êtes-vous sûr ? Tous les matchs et scores seront supprimés.';
-    
     Alert.alert(
-      title,
-      message,
+      'Réinitialiser le tournoi',
+      'Êtes-vous sûr ? Toutes les poules, matchs et scores seront supprimés.',
       [
         { text: 'Annuler', style: 'cancel' },
         {
@@ -401,15 +396,25 @@ export default function TournamentDetailScreen() {
           onPress: async () => {
             if (!token || !id) return;
             try {
-              if (hasPools) {
+              // Essayer de reset les poules d'abord
+              try {
                 await resetPools(token, id);
-              } else {
-                await deleteBracket(token, id);
+              } catch (e) {
+                // Pas de poules, essayer le bracket
+                console.log('Pas de poules, reset bracket');
               }
+              
+              // Essayer aussi de supprimer le bracket
+              try {
+                await deleteBracket(token, id);
+              } catch (e) {
+                console.log('Pas de bracket à supprimer');
+              }
+              
               setSelectedCourts([]);
               setHasPools(false);
               fetchData();
-              Alert.alert('Succès', hasPools ? 'Poules réinitialisées' : 'Bracket réinitialisé');
+              Alert.alert('Succès', 'Tournoi réinitialisé');
             } catch (e: any) {
               Alert.alert('Erreur', e.message || 'Impossible de réinitialiser');
             }
