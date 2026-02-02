@@ -38,7 +38,7 @@ from app.models import (
     team,
     tournament, 
     user,
-    pool
+    pool_tournament,
 )
 from sqlalchemy.pool import NullPool
 target_metadata = Base.metadata
