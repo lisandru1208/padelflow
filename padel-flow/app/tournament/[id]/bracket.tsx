@@ -576,7 +576,7 @@ export default function BracketScreen() {
                 size={18} 
                 color={activeTab === 'winner' ? Colors.primary : Colors.textInverse} 
               />
-              <Text style={[styles.tabText, activeTab === 'winner' && styles.tabTextActive]}>
+              <Text style={[styles.tabtextab, activeTab === 'winner' && styles.tabTextActive]}>
                 Tableau
               </Text>
             </TouchableOpacity>
@@ -589,7 +589,7 @@ export default function BracketScreen() {
                 size={18} 
                 color={activeTab === 'classification' ? Colors.primary : Colors.textInverse} 
               />
-              <Text style={[styles.tabText, activeTab === 'classification' && styles.tabTextActive]}>
+              <Text style={[styles.tabtextab, activeTab === 'classification' && styles.tabTextActive]}>
                 Classement
               </Text>
             </TouchableOpacity>
@@ -602,7 +602,7 @@ export default function BracketScreen() {
                 size={18} 
                 color={activeTab === 'passages' ? Colors.primary : Colors.textInverse} 
               />
-              <Text style={[styles.tabText, activeTab === 'passages' && styles.tabTextActive]}>
+              <Text style={[styles.tabtextab, activeTab === 'passages' && styles.tabTextActive]}>
                 Passages
               </Text>
             </TouchableOpacity>
@@ -615,7 +615,7 @@ export default function BracketScreen() {
                 size={18} 
                 color={activeTab === 'results' ? Colors.primary : Colors.textInverse} 
               />
-              <Text style={[styles.tabText, activeTab === 'results' && styles.tabTextActive]}>
+              <Text style={[styles.tabtextab, activeTab === 'results' && styles.tabTextActive]}>
                 Points
               </Text>
             </TouchableOpacity>
@@ -867,6 +867,11 @@ const styles = StyleSheet.create({
   },
   tabText: {
     fontSize: FontSizes.sm,
+    color: Colors.textInverse,
+    fontWeight: '500',
+  },
+  tabtextab:{
+    fontSize: FontSizes.xs,
     color: Colors.textInverse,
     fontWeight: '500',
   },

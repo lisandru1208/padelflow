@@ -189,11 +189,11 @@ def propagate_loser(db: Session, match: Match, loser_id: str):
                     match_3rd.team2_id = loser_id
                 db.commit()
     
-    # Quarts de finale (2 rounds avant la finale) → Matchs 5-8ème
+    # Quarts de finale (2 rounds avant la finale) → Demi-finales 5-8ème
     elif round_order == total_winner_rounds - 2:
         round_5th = db.query(Round).filter(
             Round.tournament_id == tournament_id,
-            Round.name == "Matchs 5-8ème"
+            Round.name == "Demi-finales 5-8ème"
         ).first()
         
         if round_5th:
@@ -213,6 +213,34 @@ def propagate_loser(db: Session, match: Match, loser_id: str):
                 else:
                     loser_match.team2_id = loser_id
                 db.commit()
+    
+    # Huitièmes de finale (3 rounds avant la finale) → Demi-finales 9-12ème
+    elif round_order == total_winner_rounds - 3:
+        round_9th = db.query(Round).filter(
+            Round.tournament_id == tournament_id,
+            Round.name == "Demi-finales 9-12ème"
+        ).first()
+        
+        if round_9th:
+            # 8 perdants des huitièmes → 4 matchs, mais on groupe par 2
+            # Match 1,2 → match 1 loser
+            # Match 3,4 → match 2 loser
+            # etc.
+            loser_match_order = (match.match_order + 1) // 2
+            # On n'a que 2 matchs dans les demi 9-12, donc on prend modulo 2
+            loser_match_order = ((loser_match_order - 1) % 2) + 1
+            
+            loser_match = db.query(Match).filter(
+                Match.round_id == round_9th.id,
+                Match.match_order == loser_match_order
+            ).first()
+            
+            if loser_match:
+                if match.match_order % 2 == 1:
+                    loser_match.team1_id = loser_id
+                else:
+                    loser_match.team2_id = loser_id
+                db.commit()
 
 
 def propagate_loser_bracket_winner(db: Session, match: Match):
@@ -223,8 +251,8 @@ def propagate_loser_bracket_winner(db: Session, match: Match):
     
     tournament_id = current_round.tournament_id
     
-    # Si c'est un match des "Matchs 5-8ème", le vainqueur va au "Match 5ème place"
-    if current_round.name == "Matchs 5-8ème":
+    # Si c'est un match des "Demi-finales 5-8ème", le vainqueur va au "Match 5ème place"
+    if current_round.name == "Demi-finales 5-8ème":
         round_5th_final = db.query(Round).filter(
             Round.tournament_id == tournament_id,
             Round.name == "Match 5ème place"
@@ -242,18 +270,38 @@ def propagate_loser_bracket_winner(db: Session, match: Match):
                 else:
                     match_5th.team2_id = match.winner_id
                 db.commit()
+    
+    # Si c'est un match des "Demi-finales 9-12ème", le vainqueur va au "Match 9ème place"
+    elif current_round.name == "Demi-finales 9-12ème":
+        round_9th_final = db.query(Round).filter(
+            Round.tournament_id == tournament_id,
+            Round.name == "Match 9ème place"
+        ).first()
+        
+        if round_9th_final:
+            match_9th = db.query(Match).filter(
+                Match.round_id == round_9th_final.id,
+                Match.match_order == 1
+            ).first()
+            
+            if match_9th:
+                if match.match_order == 1:
+                    match_9th.team1_id = match.winner_id
+                else:
+                    match_9th.team2_id = match.winner_id
+                db.commit()
 
 
 def propagate_loser_bracket_loser(db: Session, match: Match, loser_id: str):
-    """Propage le perdant d'un match de classement vers le match de 7ème place"""
+    """Propage le perdant d'un match de classement vers le match suivant"""
     current_round = db.query(Round).filter(Round.id == match.round_id).first()
     if not current_round:
         return
     
     tournament_id = current_round.tournament_id
     
-    # Si c'est un match des "Matchs 5-8ème", le perdant va au "Match 7ème place"
-    if current_round.name == "Matchs 5-8ème":
+    # Si c'est un match des "Demi-finales 5-8ème", le perdant va au "Match 7ème place"
+    if current_round.name == "Demi-finales 5-8ème":
         round_7th = db.query(Round).filter(
             Round.tournament_id == tournament_id,
             Round.name == "Match 7ème place"
@@ -270,4 +318,24 @@ def propagate_loser_bracket_loser(db: Session, match: Match, loser_id: str):
                     match_7th.team1_id = loser_id
                 else:
                     match_7th.team2_id = loser_id
+                db.commit()
+    
+    # Si c'est un match des "Demi-finales 9-12ème", le perdant va au "Match 11ème place"
+    elif current_round.name == "Demi-finales 9-12ème":
+        round_11th = db.query(Round).filter(
+            Round.tournament_id == tournament_id,
+            Round.name == "Match 11ème place"
+        ).first()
+        
+        if round_11th:
+            match_11th = db.query(Match).filter(
+                Match.round_id == round_11th.id,
+                Match.match_order == 1
+            ).first()
+            
+            if match_11th:
+                if match.match_order == 1:
+                    match_11th.team1_id = loser_id
+                else:
+                    match_11th.team2_id = loser_id
                 db.commit()
