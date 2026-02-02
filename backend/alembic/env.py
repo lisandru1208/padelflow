@@ -40,7 +40,7 @@ from app.models import (
     user,
     pool_tournament,
 )
-from sqlalchemy.pool import NullPool
+
 target_metadata = Base.metadata
 
 # other values from the config, defined by the needs of env.py,
