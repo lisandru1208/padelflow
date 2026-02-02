@@ -9,7 +9,7 @@ from app.models.team import Team
 from app.models.player import Player
 from app.models.tournament import Tournament
 from app.models.club_user import ClubUser
-from app.models.pool import PoolMatch, PoolTeam
+from app.models.pool_tournament import PoolMatch, PoolTeam
 
 router = APIRouter(
     prefix="/tournaments/{tournament_id}/teams",
