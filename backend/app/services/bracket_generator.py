@@ -13,18 +13,35 @@ def compute_bracket_size(num_teams: int) -> int:
     return 2 ** math.ceil(math.log2(num_teams))
 
 
+def get_round_name(round_number: int, total_rounds: int) -> str:
+    """Retourne le nom du round"""
+    remaining = total_rounds - round_number
+    
+    if remaining == 0:
+        return "Finale"
+    elif remaining == 1:
+        return "Demi-finales"
+    elif remaining == 2:
+        return "Quarts de finale"
+    elif remaining == 3:
+        return "Huitièmes de finale"
+    elif remaining == 4:
+        return "16èmes de finale"
+    else:
+        return f"Tour {round_number}"
+
+
 def generate_bracket(db, tournament_id: str):
     """
     Génère un bracket avec gestion correcte des BYE.
     
-    Logique:
-    1. Les têtes de série sont placées aux positions stratégiques
-    2. Les BYE sont donnés aux meilleures têtes de série
-    3. Les équipes non-têtes de série sont mélangées et placées dans les slots restants
-    4. Les matchs avec BYE sont automatiquement résolus
+    Approche simplifiée:
+    1. Créer tous les rounds et matchs vides d'abord
+    2. Placer les équipes dans le premier round avec les BYE
+    3. Propager les BYE round par round
     """
-    # Initialiser le générateur aléatoire
-    random.seed(time.time())
+    # Initialiser le générateur aléatoire avec timestamp
+    random.seed(time.time() * 1000)
     
     teams = db.query(Team).filter(
         Team.tournament_id == tournament_id
@@ -38,7 +55,13 @@ def generate_bracket(db, tournament_id: str):
     round_count = int(math.log2(bracket_size))
     num_byes = bracket_size - num_teams
 
-    # Supprimer ancien bracket
+    print(f"=== GÉNÉRATION BRACKET ===")
+    print(f"Équipes: {num_teams}, Bracket: {bracket_size}, Rounds: {round_count}, BYE: {num_byes}")
+
+    # ============================================
+    # NETTOYER L'ANCIEN BRACKET
+    # ============================================
+    
     existing_rounds = db.query(Round).filter(
         Round.tournament_id == tournament_id
     ).all()
@@ -46,55 +69,14 @@ def generate_bracket(db, tournament_id: str):
     for r in existing_rounds:
         db.query(Match).filter(Match.round_id == r.id).delete()
     
-    db.query(Round).filter(
-        Round.tournament_id == tournament_id
-    ).delete()
-
+    db.query(Round).filter(Round.tournament_id == tournament_id).delete()
     db.commit()
 
     # ============================================
-    # PLACEMENT DES ÉQUIPES
+    # CRÉER LES ROUNDS
     # ============================================
     
-    # Séparer têtes de série et autres
-    seeded_teams = sorted(
-        [t for t in teams if t.is_seeded],
-        key=lambda t: t.seed_position or 999
-    )
-    unseeded_teams = [t for t in teams if not t.is_seeded]
-    
-    # Mélanger les équipes non-têtes de série
-    random.shuffle(unseeded_teams)
-    
-    # Créer les slots du bracket (None = BYE)
-    slots = [None] * bracket_size
-    
-    # Positions optimales pour les têtes de série (pour qu'elles ne se rencontrent qu'en finale/demi)
-    seed_positions = get_seed_positions(bracket_size)
-    
-    # Placer les têtes de série
-    for team in seeded_teams:
-        pos = seed_positions.get(team.seed_position)
-        if pos is not None and pos < bracket_size:
-            slots[pos] = team
-    
-    # Remplir les autres positions avec les équipes non-têtes de série
-    unseeded_idx = 0
-    for i in range(bracket_size):
-        if slots[i] is None and unseeded_idx < len(unseeded_teams):
-            slots[i] = unseeded_teams[unseeded_idx]
-            unseeded_idx += 1
-    
-    # À ce stade, les slots restants (None) sont des BYE
-    # On veut que les BYE soient face aux têtes de série
-    # Réorganiser pour que les BYE soient aux bonnes positions
-    slots = optimize_bye_positions(slots, seeded_teams, seed_positions, bracket_size)
-
-    # ============================================
-    # CRÉER LES ROUNDS DU WINNER BRACKET
-    # ============================================
-    
-    winner_rounds = []
+    rounds = []
     for i in range(round_count):
         round_name = get_round_name(i + 1, round_count)
         r = Round(
@@ -105,61 +87,154 @@ def generate_bracket(db, tournament_id: str):
         db.add(r)
         db.commit()
         db.refresh(r)
-        winner_rounds.append(r)
+        rounds.append(r)
+        print(f"Round créé: {round_name} (order={i+1})")
 
-    # Créer les matchs du premier round
-    first_round = winner_rounds[0]
-    first_round_matches = []
+    # ============================================
+    # CRÉER TOUS LES MATCHS VIDES
+    # ============================================
     
-    for i in range(0, bracket_size, 2):
-        team1 = slots[i]
-        team2 = slots[i + 1]
+    all_matches = {}  # {(round_idx, match_order): match}
+    
+    for round_idx, round_obj in enumerate(rounds):
+        matches_in_round = bracket_size // (2 ** (round_idx + 1))
+        for match_num in range(1, matches_in_round + 1):
+            match = Match(
+                round_id=round_obj.id,
+                match_order=match_num,
+                team1_id=None,
+                team2_id=None,
+                bracket_type='winner',
+                is_finished=False
+            )
+            db.add(match)
+            db.commit()
+            db.refresh(match)
+            all_matches[(round_idx, match_num)] = match
+        print(f"  Round {round_idx}: {matches_in_round} matchs créés")
+
+    # ============================================
+    # PRÉPARER LES ÉQUIPES
+    # ============================================
+    
+    # Séparer têtes de série et autres
+    seeded_teams = sorted(
+        [t for t in teams if t.is_seeded],
+        key=lambda t: t.seed_position or 999
+    )
+    unseeded_teams = [t for t in teams if not t.is_seeded]
+    
+    # Mélanger les non-têtes de série
+    random.shuffle(unseeded_teams)
+    
+    print(f"Têtes de série: {len(seeded_teams)}")
+    print(f"Non-têtes de série: {len(unseeded_teams)}")
+
+    # ============================================
+    # PLACER LES ÉQUIPES DANS LE PREMIER ROUND
+    # ============================================
+    
+    # Créer la liste des slots (positions dans le bracket)
+    # None = BYE
+    slots = place_teams_in_bracket(seeded_teams, unseeded_teams, bracket_size, num_byes)
+    
+    print(f"Slots: {['BYE' if s is None else 'Team' for s in slots]}")
+
+    # Remplir les matchs du premier round
+    first_round_matches = bracket_size // 2
+    for match_num in range(1, first_round_matches + 1):
+        match = all_matches[(0, match_num)]
         
-        match = Match(
-            round_id=first_round.id,
-            match_order=(i // 2) + 1,
-            team1_id=team1.id if team1 else None,
-            team2_id=team2.id if team2 else None,
-            bracket_type='winner'
-        )
+        # Position dans les slots (0-indexed)
+        slot_idx1 = (match_num - 1) * 2
+        slot_idx2 = slot_idx1 + 1
         
-        # Si c'est un BYE (une seule équipe), résoudre automatiquement
+        team1 = slots[slot_idx1]
+        team2 = slots[slot_idx2]
+        
+        match.team1_id = team1.id if team1 else None
+        match.team2_id = team2.id if team2 else None
+        
+        # Si BYE, résoudre automatiquement
         if team1 and not team2:
             match.is_finished = True
             match.winner_id = team1.id
             match.score = "BYE"
+            print(f"  Match {match_num}: Team vs BYE -> winner=Team")
         elif team2 and not team1:
             match.is_finished = True
             match.winner_id = team2.id
             match.score = "BYE"
-        
-        db.add(match)
-        first_round_matches.append(match)
-
+            print(f"  Match {match_num}: BYE vs Team -> winner=Team")
+        elif team1 and team2:
+            print(f"  Match {match_num}: Team vs Team")
+        else:
+            # Deux BYE - ne devrait pas arriver avec une bonne répartition
+            print(f"  Match {match_num}: BYE vs BYE (ERREUR!)")
+    
     db.commit()
-
-    # Créer les matchs des rounds suivants (vides)
-    for round_idx in range(1, round_count):
-        current_round = winner_rounds[round_idx]
-        matches_in_round = bracket_size // (2 ** (round_idx + 1))
-        
-        for match_num in range(matches_in_round):
-            match = Match(
-                round_id=current_round.id,
-                match_order=match_num + 1,
-                team1_id=None,
-                team2_id=None,
-                bracket_type='winner'
-            )
-            db.add(match)
-
-    db.commit()
-
-    # Propager les BYE aux rounds suivants
-    propagate_byes(db, winner_rounds, bracket_size)
 
     # ============================================
-    # CRÉER LES MATCHS DE CLASSEMENT
+    # PROPAGER LES BYE AUX ROUNDS SUIVANTS
+    # ============================================
+    
+    for round_idx in range(round_count - 1):
+        current_round = rounds[round_idx]
+        next_round = rounds[round_idx + 1]
+        
+        matches_in_current = bracket_size // (2 ** (round_idx + 1))
+        matches_in_next = bracket_size // (2 ** (round_idx + 2))
+        
+        print(f"\nPropagation Round {round_idx} -> {round_idx + 1}")
+        
+        for current_match_num in range(1, matches_in_current + 1):
+            current_match = all_matches[(round_idx, current_match_num)]
+            
+            if current_match.is_finished and current_match.winner_id:
+                # Calculer le match suivant
+                next_match_num = (current_match_num + 1) // 2
+                next_match = all_matches.get((round_idx + 1, next_match_num))
+                
+                if next_match:
+                    # Match impair -> team1, pair -> team2
+                    if current_match_num % 2 == 1:
+                        next_match.team1_id = current_match.winner_id
+                        print(f"  Match {current_match_num} -> Next Match {next_match_num} team1")
+                    else:
+                        next_match.team2_id = current_match.winner_id
+                        print(f"  Match {current_match_num} -> Next Match {next_match_num} team2")
+        
+        db.commit()
+        
+        # Vérifier les nouveaux BYE (match avec une seule équipe)
+        for next_match_num in range(1, matches_in_next + 1):
+            next_match = all_matches[(round_idx + 1, next_match_num)]
+            
+            # Si une seule équipe et l'autre source était un BYE
+            if next_match.team1_id and not next_match.team2_id:
+                # Vérifier si le match source (pair) était terminé
+                source_match_num = next_match_num * 2
+                source_match = all_matches.get((round_idx, source_match_num))
+                if source_match and source_match.is_finished:
+                    next_match.is_finished = True
+                    next_match.winner_id = next_match.team1_id
+                    next_match.score = "BYE"
+                    print(f"  Next Match {next_match_num}: team1 only -> BYE propagé")
+            
+            elif next_match.team2_id and not next_match.team1_id:
+                # Vérifier si le match source (impair) était terminé
+                source_match_num = (next_match_num * 2) - 1
+                source_match = all_matches.get((round_idx, source_match_num))
+                if source_match and source_match.is_finished:
+                    next_match.is_finished = True
+                    next_match.winner_id = next_match.team2_id
+                    next_match.score = "BYE"
+                    print(f"  Next Match {next_match_num}: team2 only -> BYE propagé")
+        
+        db.commit()
+
+    # ============================================
+    # MATCHS DE CLASSEMENT
     # ============================================
     
     create_classification_matches(db, tournament_id, round_count, bracket_size)
@@ -175,164 +250,124 @@ def generate_bracket(db, tournament_id: str):
     }
 
 
-def get_seed_positions(bracket_size: int) -> dict:
+def place_teams_in_bracket(seeded_teams, unseeded_teams, bracket_size, num_byes):
     """
-    Retourne les positions optimales pour les têtes de série.
-    Les têtes de série sont placées pour ne se rencontrer qu'en finale/demi.
+    Place les équipes dans le bracket avec les BYE aux bonnes positions.
+    Les têtes de série reçoivent les BYE en priorité.
+    
+    Returns: Liste de slots [Team, Team, None (BYE), Team, ...]
+    """
+    slots = [None] * bracket_size
+    
+    # Positions pour les têtes de série (séparées pour ne pas se rencontrer tôt)
+    seed_positions = get_seed_slot_positions(bracket_size)
+    
+    # Placer les têtes de série
+    for i, team in enumerate(seeded_teams):
+        seed_num = i + 1
+        if seed_num in seed_positions:
+            pos = seed_positions[seed_num]
+            slots[pos] = team
+    
+    # Déterminer les positions des BYE (face aux meilleures têtes de série)
+    bye_positions = []
+    for i in range(min(num_byes, len(seed_positions))):
+        seed_num = i + 1
+        if seed_num in seed_positions:
+            seed_pos = seed_positions[seed_num]
+            # L'adversaire est dans le même match (position paire/impaire)
+            if seed_pos % 2 == 0:
+                opponent_pos = seed_pos + 1
+            else:
+                opponent_pos = seed_pos - 1
+            bye_positions.append(opponent_pos)
+    
+    # S'il reste des BYE à placer (plus que de têtes de série)
+    remaining_byes = num_byes - len(bye_positions)
+    if remaining_byes > 0:
+        # Ajouter des BYE aux positions non-TDS restantes
+        for i in range(bracket_size):
+            if remaining_byes <= 0:
+                break
+            if slots[i] is None and i not in bye_positions:
+                # Vérifier que ce n'est pas face à un BYE existant
+                opponent = i + 1 if i % 2 == 0 else i - 1
+                if opponent not in bye_positions:
+                    bye_positions.append(i)
+                    remaining_byes -= 1
+    
+    # Placer les équipes non-têtes de série dans les positions restantes
+    unseeded_idx = 0
+    for i in range(bracket_size):
+        if slots[i] is None and i not in bye_positions:
+            if unseeded_idx < len(unseeded_teams):
+                slots[i] = unseeded_teams[unseeded_idx]
+                unseeded_idx += 1
+    
+    # Les positions bye_positions restent None (= BYE)
+    
+    return slots
+
+
+def get_seed_slot_positions(bracket_size):
+    """
+    Retourne les positions des têtes de série dans le bracket.
+    Format: {seed_number: slot_position}
+    
+    Positions calculées pour que TDS1 et TDS2 ne se rencontrent qu'en finale,
+    TDS3 et TDS4 ne rencontrent TDS1/TDS2 qu'en demi, etc.
     """
     if bracket_size == 4:
-        return {1: 0, 2: 3, 3: 1, 4: 2}
+        # Demi 1: slot 0 vs 1, Demi 2: slot 2 vs 3
+        # TDS1 (slot 0) vs TDS4 (slot 1), TDS3 (slot 2) vs TDS2 (slot 3)
+        return {1: 0, 2: 3, 3: 2, 4: 1}
+    
     elif bracket_size == 8:
-        return {1: 0, 2: 7, 3: 3, 4: 4, 5: 1, 6: 6, 7: 2, 8: 5}
+        # TDS1 en haut, TDS2 en bas, TDS3/4 au milieu opposés
+        return {1: 0, 2: 7, 3: 4, 4: 3, 5: 2, 6: 5, 7: 6, 8: 1}
+    
     elif bracket_size == 16:
         return {
-            1: 0, 2: 15, 3: 7, 4: 8,
-            5: 3, 6: 12, 7: 4, 8: 11,
-            9: 1, 10: 14, 11: 6, 12: 9,
-            13: 2, 14: 13, 15: 5, 16: 10
+            1: 0,   # Haut du bracket
+            2: 15,  # Bas du bracket
+            3: 8,   # Milieu bas
+            4: 7,   # Milieu haut
+            5: 4,
+            6: 11,
+            7: 12,
+            8: 3,
+            9: 2,
+            10: 13,
+            11: 10,
+            12: 5,
+            13: 6,
+            14: 9,
+            15: 14,
+            16: 1
         }
+    
     elif bracket_size == 32:
         return {
-            1: 0, 2: 31, 3: 15, 4: 16,
-            5: 7, 6: 24, 7: 8, 8: 23,
-            9: 3, 10: 28, 11: 12, 12: 19,
-            13: 4, 14: 27, 15: 11, 16: 20
+            1: 0, 2: 31, 3: 16, 4: 15,
+            5: 8, 6: 23, 7: 24, 8: 7,
+            9: 4, 10: 27, 11: 20, 12: 11,
+            13: 12, 14: 19, 15: 28, 16: 3,
+            17: 2, 18: 29, 19: 18, 20: 13,
+            21: 14, 22: 17, 23: 30, 24: 1,
+            25: 6, 26: 25, 27: 22, 28: 9,
+            29: 10, 30: 21, 31: 26, 32: 5
         }
+    
     else:
-        # Fallback pour autres tailles
+        # Fallback simple
         return {1: 0, 2: bracket_size - 1}
-
-
-def optimize_bye_positions(slots, seeded_teams, seed_positions, bracket_size):
-    """
-    Réorganise les slots pour que les BYE soient face aux têtes de série.
-    """
-    # Compter les BYE
-    num_byes = sum(1 for s in slots if s is None)
-    
-    if num_byes == 0:
-        return slots
-    
-    # Collecter toutes les équipes (non-None)
-    all_teams = [s for s in slots if s is not None]
-    
-    # Recréer les slots
-    new_slots = [None] * bracket_size
-    
-    # Placer les têtes de série aux positions définies
-    for team in seeded_teams:
-        pos = seed_positions.get(team.seed_position)
-        if pos is not None and pos < bracket_size:
-            new_slots[pos] = team
-    
-    # Les BYE vont aux positions adverses des têtes de série
-    # (si TDS1 est en position 0, son adversaire en position 1 doit être un BYE si possible)
-    bye_positions = []
-    for i, team in enumerate(seeded_teams):
-        if i >= num_byes:
-            break
-        pos = seed_positions.get(team.seed_position)
-        if pos is not None:
-            # L'adversaire direct est à pos+1 si pos est pair, pos-1 si impair
-            opponent_pos = pos + 1 if pos % 2 == 0 else pos - 1
-            if opponent_pos < bracket_size and opponent_pos not in bye_positions:
-                bye_positions.append(opponent_pos)
-    
-    # Collecter les équipes non-têtes de série
-    non_seeded = [t for t in all_teams if not t.is_seeded]
-    random.shuffle(non_seeded)
-    
-    # Remplir les positions qui ne sont ni TDS ni BYE
-    non_seeded_idx = 0
-    for i in range(bracket_size):
-        if new_slots[i] is None and i not in bye_positions:
-            if non_seeded_idx < len(non_seeded):
-                new_slots[i] = non_seeded[non_seeded_idx]
-                non_seeded_idx += 1
-    
-    # S'il reste des équipes non placées (pas assez de positions), les mettre dans les positions BYE
-    for i in bye_positions:
-        if non_seeded_idx < len(non_seeded):
-            new_slots[i] = non_seeded[non_seeded_idx]
-            non_seeded_idx += 1
-    
-    return new_slots
-
-
-def propagate_byes(db, winner_rounds, bracket_size):
-    """
-    Propage les vainqueurs des matchs BYE aux rounds suivants.
-    """
-    for round_idx in range(len(winner_rounds) - 1):
-        current_round = winner_rounds[round_idx]
-        next_round = winner_rounds[round_idx + 1]
-        
-        # Récupérer les matchs du round actuel
-        current_matches = db.query(Match).filter(
-            Match.round_id == current_round.id
-        ).order_by(Match.match_order).all()
-        
-        # Récupérer les matchs du round suivant
-        next_matches = db.query(Match).filter(
-            Match.round_id == next_round.id
-        ).order_by(Match.match_order).all()
-        
-        for match in current_matches:
-            if match.is_finished and match.winner_id:
-                # Trouver le match suivant
-                next_match_order = (match.match_order + 1) // 2
-                next_match_idx = next_match_order - 1
-                
-                if next_match_idx < len(next_matches):
-                    next_match = next_matches[next_match_idx]
-                    
-                    # Les matchs impairs vont en team1, les pairs en team2
-                    if match.match_order % 2 == 1:
-                        next_match.team1_id = match.winner_id
-                    else:
-                        next_match.team2_id = match.winner_id
-        
-        db.commit()
-        
-        # Vérifier si des matchs du round suivant sont maintenant des BYE
-        # (une seule équipe car l'autre match était aussi un BYE)
-        for next_match in next_matches:
-            if next_match.team1_id and not next_match.team2_id:
-                # Vérifier si le match source pour team2 était un BYE résolu
-                source_match_order = next_match.match_order * 2
-                source_match = db.query(Match).filter(
-                    Match.round_id == current_round.id,
-                    Match.match_order == source_match_order
-                ).first()
-                
-                if source_match and source_match.is_finished:
-                    # Le match team2 source était un BYE, ce match devient un BYE aussi
-                    if not next_match.team2_id:
-                        next_match.is_finished = True
-                        next_match.winner_id = next_match.team1_id
-                        next_match.score = "BYE"
-            
-            elif next_match.team2_id and not next_match.team1_id:
-                source_match_order = (next_match.match_order * 2) - 1
-                source_match = db.query(Match).filter(
-                    Match.round_id == current_round.id,
-                    Match.match_order == source_match_order
-                ).first()
-                
-                if source_match and source_match.is_finished:
-                    if not next_match.team1_id:
-                        next_match.is_finished = True
-                        next_match.winner_id = next_match.team2_id
-                        next_match.score = "BYE"
-        
-        db.commit()
 
 
 def create_classification_matches(db, tournament_id: str, round_count: int, bracket_size: int):
     """Crée les matchs de classement (3ème place, 5ème place, etc.)"""
     
     if round_count >= 2:
-        # Match pour la 3ème place
+        # Match pour la 3ème place (perdants des demi-finales)
         r_3rd = Round(
             tournament_id=tournament_id,
             name="Match 3ème place",
@@ -353,23 +388,20 @@ def create_classification_matches(db, tournament_id: str, round_count: int, brac
         db.add(match_3rd)
     
     if round_count >= 3:
-        # Matchs pour 5-8ème place
-        r_5th = Round(
+        # Matchs pour 5-8ème place (perdants des quarts)
+        r_5th_semi = Round(
             tournament_id=tournament_id,
             name="Matchs 5-8ème",
             order=101
         )
-        db.add(r_5th)
+        db.add(r_5th_semi)
         db.commit()
-        db.refresh(r_5th)
+        db.refresh(r_5th_semi)
         
-        # Nombre de matchs = nombre de perdants des quarts / 2
-        num_quarter_losers = bracket_size // 4
-        num_matches_5th = num_quarter_losers // 2
-        
-        for i in range(max(1, num_matches_5th)):
+        # 2 matchs de demi pour la 5-8ème place
+        for i in range(2):
             match = Match(
-                round_id=r_5th.id,
+                round_id=r_5th_semi.id,
                 match_order=i + 1,
                 team1_id=None,
                 team2_id=None,
@@ -419,21 +451,3 @@ def create_classification_matches(db, tournament_id: str, round_count: int, brac
         db.add(match_7th)
 
     db.commit()
-
-
-def get_round_name(round_number: int, total_rounds: int) -> str:
-    """Retourne le nom du round"""
-    remaining = total_rounds - round_number
-    
-    if remaining == 0:
-        return "Finale"
-    elif remaining == 1:
-        return "Demi-finales"
-    elif remaining == 2:
-        return "Quarts de finale"
-    elif remaining == 3:
-        return "Huitièmes de finale"
-    elif remaining == 4:
-        return "16èmes de finale"
-    else:
-        return f"Tour {round_number}"
