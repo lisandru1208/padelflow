@@ -145,6 +145,8 @@ def generate_bracket(db, tournament_id: str, court_ids: list = None):
 
     # Remplir les matchs du premier round
     first_round_matches = bracket_size // 2
+    bye_match_ids = []  # Pour supprimer les matchs BYE après propagation
+    
     for match_num in range(1, first_round_matches + 1):
         match = all_matches[(0, match_num)]
         
@@ -158,21 +160,26 @@ def generate_bracket(db, tournament_id: str, court_ids: list = None):
         match.team1_id = team1.id if team1 else None
         match.team2_id = team2.id if team2 else None
         
-        # Si BYE, résoudre automatiquement
+        # Si BYE, résoudre automatiquement (pas de terrain, sera supprimé après)
         if team1 and not team2:
             match.is_finished = True
             match.winner_id = team1.id
             match.score = "BYE"
-            print(f"  Match {match_num}: Team vs BYE -> winner=Team")
+            match.court_id = None  # Pas de terrain pour un BYE
+            bye_match_ids.append(match.id)
+            print(f"  Match {match_num}: Team vs BYE -> winner=Team (pas de match réel)")
         elif team2 and not team1:
             match.is_finished = True
             match.winner_id = team2.id
             match.score = "BYE"
-            print(f"  Match {match_num}: BYE vs Team -> winner=Team")
+            match.court_id = None  # Pas de terrain pour un BYE
+            bye_match_ids.append(match.id)
+            print(f"  Match {match_num}: BYE vs Team -> winner=Team (pas de match réel)")
         elif team1 and team2:
             print(f"  Match {match_num}: Team vs Team")
         else:
             # Deux BYE - ne devrait pas arriver avec une bonne répartition
+            bye_match_ids.append(match.id)
             print(f"  Match {match_num}: BYE vs BYE (ERREUR!)")
     
     db.commit()
@@ -222,6 +229,8 @@ def generate_bracket(db, tournament_id: str, court_ids: list = None):
                     next_match.is_finished = True
                     next_match.winner_id = next_match.team1_id
                     next_match.score = "BYE"
+                    next_match.court_id = None  # Pas de terrain pour un BYE
+                    bye_match_ids.append(next_match.id)
                     print(f"  Next Match {next_match_num}: team1 only -> BYE propagé")
             
             elif next_match.team2_id and not next_match.team1_id:
@@ -232,8 +241,19 @@ def generate_bracket(db, tournament_id: str, court_ids: list = None):
                     next_match.is_finished = True
                     next_match.winner_id = next_match.team2_id
                     next_match.score = "BYE"
+                    next_match.court_id = None  # Pas de terrain pour un BYE
+                    bye_match_ids.append(next_match.id)
                     print(f"  Next Match {next_match_num}: team2 only -> BYE propagé")
         
+        db.commit()
+
+    # ============================================
+    # SUPPRIMER LES MATCHS BYE (pas de match réel)
+    # ============================================
+    
+    if bye_match_ids:
+        print(f"\nSuppression de {len(bye_match_ids)} matchs BYE...")
+        db.query(Match).filter(Match.id.in_(bye_match_ids)).delete(synchronize_session=False)
         db.commit()
 
     # ============================================
