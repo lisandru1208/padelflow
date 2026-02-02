@@ -1,5 +1,6 @@
 import math
 import random
+import time
 from app.models.round import Round
 from app.models.match import Match
 from app.models.team import Team
@@ -28,6 +29,9 @@ def get_seed_positions(bracket_size: int) -> dict:
 
 
 def generate_bracket(db, tournament_id: str):
+    # Initialiser le générateur aléatoire avec le temps actuel pour un vrai tirage au sort
+    random.seed(time.time())
+    
     teams = db.query(Team).filter(
         Team.tournament_id == tournament_id
     ).all()

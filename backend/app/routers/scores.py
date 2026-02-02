@@ -1,11 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
+import json
 
 from app.db.deps import get_db
 from app.core.deps import get_current_user
 from app.models.match import Match
 from app.models.round import Round
+from app.models.tournament import Tournament
 from app.routers.matches import check_ja_for_round
 
 
@@ -54,6 +56,9 @@ def submit_score(
     # Déterminer le perdant
     loser_id_str = team2_id_str if winner_id_str == team1_id_str else team1_id_str
 
+    # Libérer le court du match terminé
+    freed_court_id = match.court_id
+
     match.score = payload.score
     match.winner_id = winner_id_str
     match.is_finished = True
@@ -65,12 +70,41 @@ def submit_score(
     
     # Propager le perdant vers les matchs de classement
     propagate_loser(db, match, loser_id_str)
+    
+    # Assigner le court libéré au prochain match disponible
+    if freed_court_id:
+        assign_court_to_next_match(db, match, freed_court_id)
 
     return {
         "message": "Score saved",
         "match_id": str(match.id),
         "winner_team_id": str(match.winner_id)
     }
+
+
+def assign_court_to_next_match(db: Session, finished_match: Match, court_id):
+    """Assigne le court libéré au prochain match prêt à jouer"""
+    current_round = db.query(Round).filter(Round.id == finished_match.round_id).first()
+    if not current_round:
+        return
+    
+    tournament_id = current_round.tournament_id
+    
+    # Chercher un match prêt à jouer (2 équipes, pas de court, pas terminé)
+    # Priorité : même round, puis round suivant, puis matchs de classement
+    
+    # 1. Chercher dans le même round
+    next_match = db.query(Match).join(Round).filter(
+        Round.tournament_id == tournament_id,
+        Match.team1_id.isnot(None),
+        Match.team2_id.isnot(None),
+        Match.court_id.is_(None),
+        Match.is_finished == False
+    ).order_by(Round.order, Match.match_order).first()
+    
+    if next_match:
+        next_match.court_id = court_id
+        db.commit()
 
 
 def propagate_winner(db: Session, match: Match):
