@@ -4,7 +4,7 @@ import time
 from typing import List, Tuple
 from sqlalchemy.orm import Session
 
-from app.models.pool import Pool, PoolTeam, PoolMatch
+from app.models.pool_tournament import Pool, PoolTeam, PoolMatch
 from app.models.team import Team
 from app.models.round import Round
 from app.models.match import Match
