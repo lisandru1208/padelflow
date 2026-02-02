@@ -54,24 +54,21 @@ def generate(
 ):
     tournament = check_ja_for_tournament(db, tournament_id, user.id)
     
-    result = generate_bracket(db, tournament_id)
-    
     court_ids = payload.court_ids if payload and payload.court_ids else []
     if court_ids:
         tournament.selected_court_ids = json.dumps(court_ids)
     
+    # Passer les court_ids au générateur pour assigner les terrains
+    result = generate_bracket(db, tournament_id, court_ids)
+    
     tournament.bracket_generated = True
     db.commit()
-    
-    # Assigner les courts aux matchs du premier round
-    if court_ids:
-        assign_courts_to_first_round(db, tournament_id, court_ids)
     
     return result
 
 
 def assign_courts_to_first_round(db: Session, tournament_id: str, court_ids: List[str]):
-    """Assigne les courts aux matchs du premier round"""
+    """Assigne les courts aux matchs du premier round - DEPRECATED, maintenant fait dans generate_bracket"""
     first_round = db.query(Round).filter(
         Round.tournament_id == tournament_id,
         Round.order == 1

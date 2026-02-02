@@ -146,6 +146,7 @@ def generate_bracket(db, tournament_id: str, court_ids: list = None):
     # Remplir les matchs du premier round
     first_round_matches = bracket_size // 2
     bye_match_ids = []  # Pour supprimer les matchs BYE après propagation
+    real_matches_round1 = []  # Vrais matchs (pas BYE) pour assigner les courts
     
     for match_num in range(1, first_round_matches + 1):
         match = all_matches[(0, match_num)]
@@ -176,11 +177,21 @@ def generate_bracket(db, tournament_id: str, court_ids: list = None):
             bye_match_ids.append(match.id)
             print(f"  Match {match_num}: BYE vs Team -> winner=Team (pas de match réel)")
         elif team1 and team2:
-            print(f"  Match {match_num}: Team vs Team")
+            # Vrai match - on l'ajoute à la liste pour assigner un court
+            real_matches_round1.append(match)
+            print(f"  Match {match_num}: Team vs Team (vrai match)")
         else:
             # Deux BYE - ne devrait pas arriver avec une bonne répartition
             bye_match_ids.append(match.id)
             print(f"  Match {match_num}: BYE vs BYE (ERREUR!)")
+    
+    # Assigner les courts aux vrais matchs du premier round
+    if stored_court_ids and real_matches_round1:
+        print(f"\nAssignation des courts aux {len(real_matches_round1)} vrais matchs du 1er round")
+        for i, match in enumerate(real_matches_round1):
+            court_idx = i % len(stored_court_ids)
+            match.court_id = stored_court_ids[court_idx]
+            print(f"  Match -> Court {court_idx + 1}")
     
     db.commit()
 
