@@ -40,6 +40,7 @@ from app.models import (
     user,
     pool
 )
+from sqlalchemy.pool import NullPool
 target_metadata = Base.metadata
 
 # other values from the config, defined by the needs of env.py,
