@@ -6,7 +6,7 @@ import json
 
 from app.db.deps import get_db
 from app.core.deps import get_current_user
-from app.models.pool import Pool, PoolTeam, PoolMatch
+from app.models.pool_tournament import Pool, PoolTeam, PoolMatch
 from app.models.team import Team
 from app.models.player import Player
 from app.models.tournament import Tournament
