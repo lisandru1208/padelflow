@@ -7,6 +7,7 @@ import json
 from app.db.deps import get_db
 from app.core.deps import get_current_user
 from app.services.bracket_generator import generate_bracket
+from app.services.points_calculator import get_points, get_available_categories
 from app.models.round import Round
 from app.models.match import Match
 from app.models.team import Team
@@ -286,3 +287,131 @@ def get_tournament_info(
         "bracket_generated": tournament.bracket_generated,
         "selected_court_ids": selected_courts
     }
+
+
+@router.get("/final-rankings")
+def get_final_rankings(
+    tournament_id: str,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user)
+):
+    """
+    Calcule le classement final avec les points attribués.
+    Doit être appelé une fois le tournoi terminé.
+    """
+    tournament = check_ja_for_tournament(db, tournament_id, user.id)
+    
+    # Récupérer toutes les équipes
+    teams = db.query(Team).filter(Team.tournament_id == tournament_id).all()
+    num_teams = len(teams)
+    
+    if num_teams == 0:
+        return {"rankings": [], "tournament_finished": False}
+    
+    # Récupérer tous les matchs pour déterminer le classement
+    rounds = db.query(Round).filter(
+        Round.tournament_id == tournament_id
+    ).order_by(Round.order).all()
+    
+    rankings = {}  # team_id -> {"rank": X, "team": team_data}
+    
+    # Parcourir les matchs pour déterminer les classements
+    for round_ in rounds:
+        matches = db.query(Match).filter(Match.round_id == round_.id).all()
+        
+        for match in matches:
+            if not match.is_finished:
+                continue
+            
+            # Finale (winner bracket, dernier round < 100)
+            if round_.name == "Finale" and match.winner_id:
+                rankings[str(match.winner_id)] = {"rank": 1}
+                loser_id = str(match.team1_id) if str(match.winner_id) == str(match.team2_id) else str(match.team2_id)
+                if loser_id and loser_id != "None":
+                    rankings[loser_id] = {"rank": 2}
+            
+            # Match 3ème place
+            elif round_.name == "Match 3ème place" and match.winner_id:
+                rankings[str(match.winner_id)] = {"rank": 3}
+                loser_id = str(match.team1_id) if str(match.winner_id) == str(match.team2_id) else str(match.team2_id)
+                if loser_id and loser_id != "None":
+                    rankings[loser_id] = {"rank": 4}
+            
+            # Match 5ème place
+            elif round_.name == "Match 5ème place" and match.winner_id:
+                rankings[str(match.winner_id)] = {"rank": 5}
+                loser_id = str(match.team1_id) if str(match.winner_id) == str(match.team2_id) else str(match.team2_id)
+                if loser_id and loser_id != "None":
+                    rankings[loser_id] = {"rank": 6}
+            
+            # Match 7ème place
+            elif round_.name == "Match 7ème place" and match.winner_id:
+                rankings[str(match.winner_id)] = {"rank": 7}
+                loser_id = str(match.team1_id) if str(match.winner_id) == str(match.team2_id) else str(match.team2_id)
+                if loser_id and loser_id != "None":
+                    rankings[loser_id] = {"rank": 8}
+    
+    # Assigner un rang par défaut aux équipes non classées (perdants premiers tours)
+    next_rank = 9
+    for team in teams:
+        team_id = str(team.id)
+        if team_id not in rankings:
+            rankings[team_id] = {"rank": next_rank}
+            next_rank += 1
+    
+    # Construire le résultat final avec les points
+    result = []
+    category = tournament.category or "P25"
+    
+    for team in teams:
+        team_id = str(team.id)
+        rank = rankings.get(team_id, {}).get("rank", num_teams)
+        points = get_points(category, rank, num_teams)
+        
+        players = db.query(Player).filter(Player.team_id == team.id).all()
+        
+        result.append({
+            "rank": rank,
+            "points": points,
+            "team_id": team_id,
+            "combined_ranking": team.combined_ranking,
+            "is_seeded": team.is_seeded,
+            "seed_position": team.seed_position,
+            "players": [
+                {
+                    "id": str(p.id),
+                    "first_name": p.first_name,
+                    "last_name": p.last_name,
+                    "ranking": p.ranking
+                }
+                for p in players
+            ]
+        })
+    
+    # Trier par rang
+    result.sort(key=lambda x: x["rank"])
+    
+    # Vérifier si le tournoi est terminé (finale jouée)
+    finale_played = any(r["rank"] == 1 for r in result)
+    
+    return {
+        "tournament_id": str(tournament.id),
+        "tournament_name": tournament.name,
+        "category": category,
+        "num_teams": num_teams,
+        "tournament_finished": finale_played,
+        "rankings": result
+    }
+
+
+@router.post("/finish")
+def finish_tournament(
+    tournament_id: str,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user)
+):
+    """Marque le tournoi comme terminé"""
+    tournament = check_ja_for_tournament(db, tournament_id, user.id)
+    tournament.is_finished = True
+    db.commit()
+    return {"message": "Tournament marked as finished"}

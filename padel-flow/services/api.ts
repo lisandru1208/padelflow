@@ -364,6 +364,41 @@ export async function getClassificationRounds(token: string, tournamentId: strin
   );
 }
 
+export interface TeamRanking {
+  rank: number;
+  points: number;
+  team_id: string;
+  combined_ranking: number;
+  is_seeded: boolean;
+  seed_position?: number;
+  players: Player[];
+}
+
+export interface FinalRankings {
+  tournament_id: string;
+  tournament_name: string;
+  category: string;
+  num_teams: number;
+  tournament_finished: boolean;
+  rankings: TeamRanking[];
+}
+
+export async function getFinalRankings(token: string, tournamentId: string): Promise<FinalRankings> {
+  return apiCall<FinalRankings>(
+    `/tournaments/${tournamentId}/final-rankings`,
+    { method: 'GET' },
+    token
+  );
+}
+
+export async function finishTournament(token: string, tournamentId: string): Promise<void> {
+  return apiCall<void>(
+    `/tournaments/${tournamentId}/finish`,
+    { method: 'POST' },
+    token
+  );
+}
+
 export async function getMatches(token: string, roundId: string): Promise<Match[]> {
   return apiCall<Match[]>(`/rounds/${roundId}/matches/`, { method: 'GET' }, token);
 }

@@ -1,5 +1,5 @@
 // app/tournament/[id]/bracket.tsx
-// Écran bracket avec onglets Winner et Classement
+// Écran bracket avec onglets Winner, Classement et Résultats
 
 import React, { useState, useCallback } from 'react';
 import {
@@ -19,10 +19,12 @@ import { useAuth } from '../../../context/AuthContext';
 import {
   getRounds,
   getClassificationRounds,
+  getFinalRankings,
   submitScore,
   RoundWithMatches,
   Match,
   Team,
+  FinalRankings,
 } from '../../../services/api';
 import { Button, Input } from '../../../components';
 import { Colors, Spacing, FontSizes, BorderRadius } from '../../../constants/theme';
@@ -33,11 +35,12 @@ export default function BracketScreen() {
 
   const [winnerRounds, setWinnerRounds] = useState<RoundWithMatches[]>([]);
   const [classificationRounds, setClassificationRounds] = useState<RoundWithMatches[]>([]);
+  const [finalRankings, setFinalRankings] = useState<FinalRankings | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   
   // Onglets
-  const [activeTab, setActiveTab] = useState<'winner' | 'classification'>('winner');
+  const [activeTab, setActiveTab] = useState<'winner' | 'classification' | 'results'>('winner');
 
   // Modal score
   const [showScoreModal, setShowScoreModal] = useState(false);
@@ -49,12 +52,14 @@ export default function BracketScreen() {
   const fetchData = async () => {
     if (!token || !id) return;
     try {
-      const [winnerData, classificationData] = await Promise.all([
+      const [winnerData, classificationData, rankingsData] = await Promise.all([
         getRounds(token, id),
-        getClassificationRounds(token, id)
+        getClassificationRounds(token, id),
+        getFinalRankings(token, id)
       ]);
       setWinnerRounds(Array.isArray(winnerData) ? winnerData : []);
       setClassificationRounds(Array.isArray(classificationData) ? classificationData : []);
+      setFinalRankings(rankingsData);
     } catch (e: any) {
       console.error('Erreur:', e);
       Alert.alert('Erreur', e.message || 'Impossible de charger le bracket');
@@ -249,6 +254,97 @@ export default function BracketScreen() {
     );
   };
 
+  const renderFinalRankings = () => {
+    if (!finalRankings || finalRankings.rankings.length === 0) {
+      return (
+        <View style={styles.emptyBracket}>
+          <Ionicons name="podium-outline" size={48} color={Colors.textLight} />
+          <Text style={styles.emptyBracketText}>Aucun résultat disponible</Text>
+          <Text style={styles.emptySubtext}>Les résultats apparaîtront une fois les matchs terminés</Text>
+        </View>
+      );
+    }
+
+    const getMedalColor = (rank: number) => {
+      switch (rank) {
+        case 1: return '#FFD700'; // Or
+        case 2: return '#C0C0C0'; // Argent
+        case 3: return '#CD7F32'; // Bronze
+        default: return Colors.textLight;
+      }
+    };
+
+    const getMedalIcon = (rank: number) => {
+      if (rank <= 3) return 'medal';
+      return 'ribbon';
+    };
+
+    return (
+      <View style={styles.rankingsContainer}>
+        {/* Header avec infos tournoi */}
+        <View style={styles.rankingsHeader}>
+          <Text style={styles.rankingsTitle}>{finalRankings.tournament_name}</Text>
+          <View style={styles.rankingsInfo}>
+            <View style={styles.rankingsBadge}>
+              <Text style={styles.rankingsBadgeText}>{finalRankings.category}</Text>
+            </View>
+            <Text style={styles.rankingsTeams}>{finalRankings.num_teams} équipes</Text>
+          </View>
+          {!finalRankings.tournament_finished && (
+            <View style={styles.inProgressBanner}>
+              <Ionicons name="time" size={16} color={Colors.warning} />
+              <Text style={styles.inProgressText}>Tournoi en cours</Text>
+            </View>
+          )}
+        </View>
+
+        {/* Liste des classements */}
+        {finalRankings.rankings.map((team, index) => (
+          <View key={team.team_id} style={[
+            styles.rankingCard,
+            team.rank <= 3 && styles.rankingCardTop3
+          ]}>
+            <View style={styles.rankingLeft}>
+              <View style={[
+                styles.rankBadge,
+                { backgroundColor: team.rank <= 3 ? getMedalColor(team.rank) : Colors.surfaceSecondary }
+              ]}>
+                {team.rank <= 3 ? (
+                  <Ionicons name={getMedalIcon(team.rank)} size={20} color={Colors.textInverse} />
+                ) : (
+                  <Text style={styles.rankNumber}>{team.rank}</Text>
+                )}
+              </View>
+            </View>
+            
+            <View style={styles.rankingMiddle}>
+              <View style={styles.rankingNameRow}>
+                <Text style={styles.rankingTeamName}>
+                  {team.players.length >= 2 
+                    ? `${team.players[0].last_name} / ${team.players[1].last_name}`
+                    : 'Équipe'}
+                </Text>
+                {team.is_seeded && (
+                  <View style={styles.seededBadgeSmall}>
+                    <Ionicons name="star" size={10} color={Colors.accent} />
+                  </View>
+                )}
+              </View>
+              <Text style={styles.rankingPlayers}>
+                {team.players.map(p => `${p.first_name} ${p.last_name}`).join(' & ')}
+              </Text>
+            </View>
+            
+            <View style={styles.rankingRight}>
+              <Text style={styles.rankingPoints}>{team.points}</Text>
+              <Text style={styles.rankingPointsLabel}>pts</Text>
+            </View>
+          </View>
+        ))}
+      </View>
+    );
+  };
+
   const renderBracket = (rounds: RoundWithMatches[], isClassification: boolean = false) => {
     if (rounds.length === 0) {
       return (
@@ -357,12 +453,25 @@ export default function BracketScreen() {
               onPress={() => setActiveTab('classification')}
             >
               <Ionicons 
-                name="podium" 
+                name="git-branch" 
                 size={18} 
                 color={activeTab === 'classification' ? Colors.primary : Colors.textInverse} 
               />
               <Text style={[styles.tabText, activeTab === 'classification' && styles.tabTextActive]}>
-                Classement
+                Matchs
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.tab, activeTab === 'results' && styles.tabActive]}
+              onPress={() => setActiveTab('results')}
+            >
+              <Ionicons 
+                name="podium" 
+                size={18} 
+                color={activeTab === 'results' ? Colors.primary : Colors.textInverse} 
+              />
+              <Text style={[styles.tabText, activeTab === 'results' && styles.tabTextActive]}>
+                Résultats
               </Text>
             </TouchableOpacity>
           </View>
@@ -379,26 +488,27 @@ export default function BracketScreen() {
             />
           }
         >
-          {activeTab === 'winner' 
-            ? renderBracket(winnerRounds, false)
-            : renderBracket(classificationRounds, true)
-          }
+          {activeTab === 'winner' && renderBracket(winnerRounds, false)}
+          {activeTab === 'classification' && renderBracket(classificationRounds, true)}
+          {activeTab === 'results' && renderFinalRankings()}
 
-          {/* Légende */}
-          <View style={styles.legend}>
-            <View style={styles.legendItem}>
-              <View style={[styles.legendDot, { backgroundColor: Colors.success }]} />
-              <Text style={styles.legendText}>Match terminé</Text>
+          {/* Légende - seulement pour les onglets bracket */}
+          {activeTab !== 'results' && (
+            <View style={styles.legend}>
+              <View style={styles.legendItem}>
+                <View style={[styles.legendDot, { backgroundColor: Colors.success }]} />
+                <Text style={styles.legendText}>Match terminé</Text>
+              </View>
+              <View style={styles.legendItem}>
+                <View style={[styles.legendDot, { backgroundColor: Colors.warning }]} />
+                <Text style={styles.legendText}>En attente de score</Text>
+              </View>
+              <View style={styles.legendItem}>
+                <View style={[styles.legendDot, { backgroundColor: Colors.textLight }]} />
+                <Text style={styles.legendText}>En attente d'adversaire</Text>
+              </View>
             </View>
-            <View style={styles.legendItem}>
-              <View style={[styles.legendDot, { backgroundColor: Colors.warning }]} />
-              <Text style={styles.legendText}>En attente de score</Text>
-            </View>
-            <View style={styles.legendItem}>
-              <View style={[styles.legendDot, { backgroundColor: Colors.textLight }]} />
-              <Text style={styles.legendText}>En attente d'adversaire</Text>
-            </View>
-          </View>
+          )}
         </ScrollView>
       </View>
 
@@ -899,5 +1009,121 @@ const styles = StyleSheet.create({
   },
   modalButton: {
     flex: 1,
+  },
+  // Rankings styles
+  rankingsContainer: {
+    padding: Spacing.md,
+  },
+  rankingsHeader: {
+    alignItems: 'center',
+    marginBottom: Spacing.lg,
+    padding: Spacing.md,
+    backgroundColor: Colors.surface,
+    borderRadius: BorderRadius.lg,
+  },
+  rankingsTitle: {
+    fontSize: FontSizes.xl,
+    fontWeight: 'bold',
+    color: Colors.text,
+    marginBottom: Spacing.sm,
+  },
+  rankingsInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+  },
+  rankingsBadge: {
+    backgroundColor: Colors.primary,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.xs,
+    borderRadius: BorderRadius.full,
+  },
+  rankingsBadgeText: {
+    color: Colors.textInverse,
+    fontWeight: '600',
+    fontSize: FontSizes.sm,
+  },
+  rankingsTeams: {
+    fontSize: FontSizes.md,
+    color: Colors.textSecondary,
+  },
+  inProgressBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.warningLight,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.xs,
+    borderRadius: BorderRadius.full,
+    marginTop: Spacing.sm,
+    gap: Spacing.xs,
+  },
+  inProgressText: {
+    color: Colors.warning,
+    fontWeight: '500',
+    fontSize: FontSizes.sm,
+  },
+  rankingCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.surface,
+    borderRadius: BorderRadius.md,
+    padding: Spacing.md,
+    marginBottom: Spacing.sm,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  rankingCardTop3: {
+    borderColor: Colors.accent,
+    borderWidth: 2,
+  },
+  rankingLeft: {
+    marginRight: Spacing.md,
+  },
+  rankBadge: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  rankNumber: {
+    fontSize: FontSizes.md,
+    fontWeight: 'bold',
+    color: Colors.text,
+  },
+  rankingMiddle: {
+    flex: 1,
+  },
+  rankingNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+  },
+  rankingTeamName: {
+    fontSize: FontSizes.md,
+    fontWeight: '600',
+    color: Colors.text,
+  },
+  seededBadgeSmall: {
+    backgroundColor: Colors.warningLight,
+    borderRadius: 8,
+    padding: 2,
+  },
+  rankingPlayers: {
+    fontSize: FontSizes.sm,
+    color: Colors.textSecondary,
+    marginTop: 2,
+  },
+  rankingRight: {
+    alignItems: 'center',
+  },
+  rankingPoints: {
+    fontSize: FontSizes.xl,
+    fontWeight: 'bold',
+    color: Colors.primary,
+  },
+  rankingPointsLabel: {
+    fontSize: FontSizes.xs,
+    color: Colors.textSecondary,
   },
 });
