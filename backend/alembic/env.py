@@ -38,8 +38,8 @@ from app.models import (
     team,
     tournament, 
     user,
+    pool
 )
-from sqlalchemy import pool
 target_metadata = Base.metadata
 
 # other values from the config, defined by the needs of env.py,
