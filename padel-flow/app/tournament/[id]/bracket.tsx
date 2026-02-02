@@ -1,7 +1,7 @@
 // app/tournament/[id]/bracket.tsx
-// Écran bracket avec onglets Winner, Classement et Résultats
+// Écran bracket avec onglets Winner, Classement, Passages et Résultats
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -40,7 +40,7 @@ export default function BracketScreen() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   
   // Onglets
-  const [activeTab, setActiveTab] = useState<'winner' | 'classification' | 'results'>('winner');
+  const [activeTab, setActiveTab] = useState<'winner' | 'classification' | 'passages' | 'results'>('winner');
 
   // Modal score
   const [showScoreModal, setShowScoreModal] = useState(false);
@@ -345,6 +345,138 @@ export default function BracketScreen() {
     );
   };
 
+  // Grouper tous les matchs par terrain pour l'onglet Passages
+  const allMatchesByCourt = useMemo(() => {
+    const allRounds = [...winnerRounds, ...classificationRounds];
+    const matchesByCourt: { [courtName: string]: { match: Match; roundName: string }[] } = {};
+    const matchesNoCourt: { match: Match; roundName: string }[] = [];
+    
+    allRounds.forEach(round => {
+      round.matches.forEach(match => {
+        const item = { match, roundName: round.name };
+        if (match.court?.name) {
+          if (!matchesByCourt[match.court.name]) {
+            matchesByCourt[match.court.name] = [];
+          }
+          matchesByCourt[match.court.name].push(item);
+        } else {
+          matchesNoCourt.push(item);
+        }
+      });
+    });
+    
+    return { matchesByCourt, matchesNoCourt };
+  }, [winnerRounds, classificationRounds]);
+
+  const getTeamDisplayName = (team: Team | undefined | null): string => {
+    if (!team || !team.players || team.players.length < 2) return 'À déterminer';
+    return `${team.players[0].last_name} / ${team.players[1].last_name}`;
+  };
+
+  const renderPassages = () => {
+    const { matchesByCourt, matchesNoCourt } = allMatchesByCourt;
+    const courtNames = Object.keys(matchesByCourt).sort();
+    
+    if (courtNames.length === 0 && matchesNoCourt.length === 0) {
+      return (
+        <View style={styles.emptyBracket}>
+          <Ionicons name="list-outline" size={48} color={Colors.textLight} />
+          <Text style={styles.emptyBracketText}>Aucun match à afficher</Text>
+        </View>
+      );
+    }
+
+    return (
+      <View style={styles.passagesContainer}>
+        {courtNames.map(courtName => (
+          <View key={courtName} style={styles.courtSection}>
+            <View style={styles.courtHeader}>
+              <Ionicons name="location" size={20} color={Colors.primary} />
+              <Text style={styles.courtTitle}>{courtName}</Text>
+            </View>
+            {matchesByCourt[courtName].map((item, idx) => (
+              <TouchableOpacity
+                key={item.match.id}
+                style={[
+                  styles.passageCard,
+                  item.match.is_finished && styles.passageCardFinished,
+                  !item.match.team1 || !item.match.team2 ? styles.passageCardPending : null
+                ]}
+                onPress={() => openScoreModal(item.match)}
+                disabled={item.match.is_finished || !item.match.team1 || !item.match.team2}
+              >
+                <View style={styles.passageNumber}>
+                  <Text style={styles.passageNumberText}>{idx + 1}</Text>
+                </View>
+                <View style={styles.passageContent}>
+                  <Text style={styles.passageRound}>{item.roundName}</Text>
+                  <View style={styles.passageTeams}>
+                    <Text style={[
+                      styles.passageTeamName,
+                      item.match.winner_id === item.match.team1?.id && styles.passageTeamWinner
+                    ]}>
+                      {getTeamDisplayName(item.match.team1)}
+                    </Text>
+                    <Text style={styles.passageVs}>vs</Text>
+                    <Text style={[
+                      styles.passageTeamName,
+                      item.match.winner_id === item.match.team2?.id && styles.passageTeamWinner
+                    ]}>
+                      {getTeamDisplayName(item.match.team2)}
+                    </Text>
+                  </View>
+                </View>
+                <View style={styles.passageStatus}>
+                  {item.match.is_finished ? (
+                    <View style={styles.passageScoreContainer}>
+                      <Text style={styles.passageScore}>{item.match.score}</Text>
+                      <Ionicons name="checkmark-circle" size={18} color={Colors.success} />
+                    </View>
+                  ) : item.match.team1 && item.match.team2 ? (
+                    <Text style={styles.passageWaiting}>À jouer</Text>
+                  ) : (
+                    <Text style={styles.passagePending}>En attente</Text>
+                  )}
+                </View>
+              </TouchableOpacity>
+            ))}
+          </View>
+        ))}
+        
+        {matchesNoCourt.length > 0 && (
+          <View style={styles.courtSection}>
+            <View style={styles.courtHeader}>
+              <Ionicons name="help-circle" size={20} color={Colors.textSecondary} />
+              <Text style={styles.courtTitle}>Sans terrain assigné</Text>
+            </View>
+            {matchesNoCourt.map((item, idx) => (
+              <View key={item.match.id} style={[styles.passageCard, styles.passageCardNoCourt]}>
+                <View style={styles.passageNumber}>
+                  <Text style={styles.passageNumberText}>?</Text>
+                </View>
+                <View style={styles.passageContent}>
+                  <Text style={styles.passageRound}>{item.roundName}</Text>
+                  <View style={styles.passageTeams}>
+                    <Text style={styles.passageTeamName}>{getTeamDisplayName(item.match.team1)}</Text>
+                    <Text style={styles.passageVs}>vs</Text>
+                    <Text style={styles.passageTeamName}>{getTeamDisplayName(item.match.team2)}</Text>
+                  </View>
+                </View>
+                <View style={styles.passageStatus}>
+                  {item.match.is_finished ? (
+                    <Text style={styles.passageScore}>{item.match.score}</Text>
+                  ) : (
+                    <Text style={styles.passagePending}>En attente</Text>
+                  )}
+                </View>
+              </View>
+            ))}
+          </View>
+        )}
+      </View>
+    );
+  };
+
   const renderBracket = (rounds: RoundWithMatches[], isClassification: boolean = false) => {
     if (rounds.length === 0) {
       return (
@@ -445,7 +577,7 @@ export default function BracketScreen() {
                 color={activeTab === 'winner' ? Colors.primary : Colors.textInverse} 
               />
               <Text style={[styles.tabText, activeTab === 'winner' && styles.tabTextActive]}>
-                Tableau principal
+                Tableau
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -453,12 +585,25 @@ export default function BracketScreen() {
               onPress={() => setActiveTab('classification')}
             >
               <Ionicons 
-                name="git-branch" 
+                name="medal" 
                 size={18} 
                 color={activeTab === 'classification' ? Colors.primary : Colors.textInverse} 
               />
               <Text style={[styles.tabText, activeTab === 'classification' && styles.tabTextActive]}>
-                Matchs
+                Classement
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.tab, activeTab === 'passages' && styles.tabActive]}
+              onPress={() => setActiveTab('passages')}
+            >
+              <Ionicons 
+                name="list" 
+                size={18} 
+                color={activeTab === 'passages' ? Colors.primary : Colors.textInverse} 
+              />
+              <Text style={[styles.tabText, activeTab === 'passages' && styles.tabTextActive]}>
+                Passages
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -471,7 +616,7 @@ export default function BracketScreen() {
                 color={activeTab === 'results' ? Colors.primary : Colors.textInverse} 
               />
               <Text style={[styles.tabText, activeTab === 'results' && styles.tabTextActive]}>
-                Résultats
+                Points
               </Text>
             </TouchableOpacity>
           </View>
@@ -490,10 +635,11 @@ export default function BracketScreen() {
         >
           {activeTab === 'winner' && renderBracket(winnerRounds, false)}
           {activeTab === 'classification' && renderBracket(classificationRounds, true)}
+          {activeTab === 'passages' && renderPassages()}
           {activeTab === 'results' && renderFinalRankings()}
 
           {/* Légende - seulement pour les onglets bracket */}
-          {activeTab !== 'results' && (
+          {(activeTab === 'winner' || activeTab === 'classification') && (
             <View style={styles.legend}>
               <View style={styles.legendItem}>
                 <View style={[styles.legendDot, { backgroundColor: Colors.success }]} />
@@ -1125,5 +1271,109 @@ const styles = StyleSheet.create({
   rankingPointsLabel: {
     fontSize: FontSizes.xs,
     color: Colors.textSecondary,
+  },
+  // Styles pour l'onglet Passages
+  passagesContainer: {
+    padding: Spacing.md,
+  },
+  courtSection: {
+    marginBottom: Spacing.lg,
+  },
+  courtHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    marginBottom: Spacing.md,
+    paddingBottom: Spacing.sm,
+    borderBottomWidth: 2,
+    borderBottomColor: Colors.primary,
+  },
+  courtTitle: {
+    fontSize: FontSizes.lg,
+    fontWeight: 'bold',
+    color: Colors.text,
+  },
+  passageCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.surface,
+    borderRadius: BorderRadius.md,
+    padding: Spacing.sm,
+    marginBottom: Spacing.sm,
+    borderLeftWidth: 4,
+    borderLeftColor: Colors.warning,
+  },
+  passageCardFinished: {
+    borderLeftColor: Colors.success,
+    opacity: 0.8,
+  },
+  passageCardPending: {
+    borderLeftColor: Colors.textLight,
+  },
+  passageCardNoCourt: {
+    borderLeftColor: Colors.error,
+  },
+  passageNumber: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: Colors.surfaceSecondary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: Spacing.sm,
+  },
+  passageNumberText: {
+    fontSize: FontSizes.sm,
+    fontWeight: 'bold',
+    color: Colors.textSecondary,
+  },
+  passageContent: {
+    flex: 1,
+  },
+  passageRound: {
+    fontSize: FontSizes.xs,
+    color: Colors.textSecondary,
+    marginBottom: 2,
+  },
+  passageTeams: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+  },
+  passageTeamName: {
+    fontSize: FontSizes.sm,
+    color: Colors.text,
+  },
+  passageTeamWinner: {
+    fontWeight: 'bold',
+    color: Colors.primary,
+  },
+  passageVs: {
+    fontSize: FontSizes.xs,
+    color: Colors.textLight,
+    marginHorizontal: Spacing.xs,
+  },
+  passageStatus: {
+    alignItems: 'flex-end',
+    minWidth: 60,
+  },
+  passageScoreContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+  },
+  passageScore: {
+    fontSize: FontSizes.sm,
+    fontWeight: 'bold',
+    color: Colors.primary,
+  },
+  passageWaiting: {
+    fontSize: FontSizes.xs,
+    color: Colors.warning,
+    fontWeight: '500',
+  },
+  passagePending: {
+    fontSize: FontSizes.xs,
+    color: Colors.textLight,
   },
 });

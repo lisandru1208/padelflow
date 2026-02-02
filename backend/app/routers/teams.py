@@ -9,6 +9,7 @@ from app.models.team import Team
 from app.models.player import Player
 from app.models.tournament import Tournament
 from app.models.club_user import ClubUser
+from app.models.pool import PoolMatch, PoolTeam
 
 router = APIRouter(
     prefix="/tournaments/{tournament_id}/teams",
@@ -241,6 +242,16 @@ def delete_team(
 
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
+
+    # Supprimer les références dans pool_matches
+    db.query(PoolMatch).filter(
+        (PoolMatch.team1_id == team_id) | 
+        (PoolMatch.team2_id == team_id) |
+        (PoolMatch.winner_id == team_id)
+    ).delete(synchronize_session=False)
+    
+    # Supprimer les références dans pool_teams
+    db.query(PoolTeam).filter(PoolTeam.team_id == team_id).delete(synchronize_session=False)
 
     # Supprimer les joueurs
     db.query(Player).filter(Player.team_id == team_id).delete()

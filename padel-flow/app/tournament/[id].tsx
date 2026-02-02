@@ -138,10 +138,15 @@ export default function TournamentDetailScreen() {
         if (tournamentData.bracket_generated) {
           try {
             const poolsData = await getPools(token, id);
-            setHasPools(poolsData && poolsData.length > 0);
-          } catch {
+            const hasPoolsResult = poolsData && Array.isArray(poolsData) && poolsData.length > 0;
+            console.log('Pools check:', poolsData, 'hasPools:', hasPoolsResult);
+            setHasPools(hasPoolsResult);
+          } catch (e) {
+            console.log('Pas de poules:', e);
             setHasPools(false);
           }
+        } else {
+          setHasPools(false);
         }
       } catch (e) {
         console.log('Pas d\'équipes ou erreur:', e);
