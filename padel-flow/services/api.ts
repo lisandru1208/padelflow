@@ -273,16 +273,21 @@ export interface Round {
 export interface Match {
   id: string;
   round_id: string;
+  match_order: number;
   position: number;
   team1_id?: string;
   team2_id?: string;
   team1?: Team;
   team2?: Team;
+  winner_id?: string;
   winner_team_id?: string;
   score?: string;
   court_id?: string;
   court?: Court;
+  is_finished: boolean;
   status?: string;
+  bracket_type?: string;
+  classification_rank?: number;
 }
 
 export interface BracketResponse {
@@ -297,7 +302,7 @@ export async function generateBracket(
 ): Promise<BracketResponse> {
   return apiCall<BracketResponse>(
     `/tournaments/${tournamentId}/generate-bracket`,
-    { 
+    {
       method: 'POST',
       body: JSON.stringify({ court_ids: courtIds || [] })
     },

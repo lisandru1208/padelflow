@@ -38,7 +38,7 @@ export default function BracketScreen() {
   const [finalRankings, setFinalRankings] = useState<FinalRankings | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  
+
   // Onglets
   const [activeTab, setActiveTab] = useState<'winner' | 'classification' | 'passages' | 'results'>('winner');
 
@@ -242,7 +242,7 @@ export default function BracketScreen() {
             <Text style={styles.matchPendingText}>En attente</Text>
           </View>
         )}
-        
+
         {/* Court assigné */}
         {match.court && (
           <View style={styles.courtBadge}>
@@ -316,11 +316,11 @@ export default function BracketScreen() {
                 )}
               </View>
             </View>
-            
+
             <View style={styles.rankingMiddle}>
               <View style={styles.rankingNameRow}>
                 <Text style={styles.rankingTeamName}>
-                  {team.players.length >= 2 
+                  {team.players.length >= 2
                     ? `${team.players[0].last_name} / ${team.players[1].last_name}`
                     : 'Équipe'}
                 </Text>
@@ -334,7 +334,7 @@ export default function BracketScreen() {
                 {team.players.map(p => `${p.first_name} ${p.last_name}`).join(' & ')}
               </Text>
             </View>
-            
+
             <View style={styles.rankingRight}>
               <Text style={styles.rankingPoints}>{team.points}</Text>
               <Text style={styles.rankingPointsLabel}>pts</Text>
@@ -345,27 +345,63 @@ export default function BracketScreen() {
     );
   };
 
-  // Grouper tous les matchs par terrain pour l'onglet Passages
-  const allMatchesByCourt = useMemo(() => {
+  // Trier tous les matchs pour l'onglet Passages
+  const sortedMatches = useMemo(() => {
     const allRounds = [...winnerRounds, ...classificationRounds];
-    const matchesByCourt: { [courtName: string]: { match: Match; roundName: string }[] } = {};
-    const matchesNoCourt: { match: Match; roundName: string }[] = [];
-    
+    let allMatches: { match: Match; roundName: string; roundOrder: number }[] = [];
+
     allRounds.forEach(round => {
       round.matches.forEach(match => {
-        const item = { match, roundName: round.name };
-        if (match.court?.name) {
-          if (!matchesByCourt[match.court.name]) {
-            matchesByCourt[match.court.name] = [];
-          }
-          matchesByCourt[match.court.name].push(item);
-        } else {
-          matchesNoCourt.push(item);
-        }
+        allMatches.push({
+          match,
+          roundName: round.name,
+          roundOrder: round.order
+        });
       });
     });
-    
-    return { matchesByCourt, matchesNoCourt };
+
+    // Définir le statut pour le tri
+    const getStatusWeight = (m: Match) => {
+      const isFinished = m.is_finished || !!m.winner_id;
+      const isRunning = !isFinished && !!m.court;
+      const isReady = !isFinished && !m.court && !!m.team1 && !!m.team2;
+
+      if (isRunning) return 0; // En cours (Priorité 1)
+      if (isReady) return 1;   // En attente (Priorité 2)
+      if (isFinished) return 3; // Terminé (Priorité 4 - Fin)
+      return 2;                // A venir / Incomplet (Priorité 3)
+    };
+
+    // Helper pour normaliser l'ordre des rounds (intercaler Winner et Loser)
+    const getVirtualRoundOrder = (roundOrder: number) => {
+      // Les rounds du Winner Bracket sont 1, 2, 3...
+      // Les rounds du Loser Bracket sont basés sur 100 * round_idx (100, 200...)
+      // On veut : Winner R1 (1) -> Loser R1 (100 -> 1.5) -> Winner R2 (2) -> ...
+
+      if (roundOrder < 100) return roundOrder;
+
+      const baseRound = Math.floor(roundOrder / 100);
+      // On ajoute 0.5 pour le placer après le round principal correspondant
+      // Les sous-rounds (+10, +20) seront 1.6, 1.7 etc.
+      const subOrder = (roundOrder % 100) / 100; // 0.1, 0.2
+      return baseRound + 0.5 + subOrder;
+    };
+
+    return allMatches.sort((a, b) => {
+      const statusA = getStatusWeight(a.match);
+      const statusB = getStatusWeight(b.match);
+
+      if (statusA !== statusB) return statusA - statusB;
+
+      // Si même statut, trier par ordre chronologique virtuel (intercalé)
+      const virtualOrderA = getVirtualRoundOrder(a.roundOrder);
+      const virtualOrderB = getVirtualRoundOrder(b.roundOrder);
+
+      if (Math.abs(virtualOrderA - virtualOrderB) > 0.01) {
+        return virtualOrderA - virtualOrderB;
+      }
+      return a.match.match_order - b.match.match_order;
+    });
   }, [winnerRounds, classificationRounds]);
 
   const getTeamDisplayName = (team: Team | undefined | null): string => {
@@ -374,10 +410,7 @@ export default function BracketScreen() {
   };
 
   const renderPassages = () => {
-    const { matchesByCourt, matchesNoCourt } = allMatchesByCourt;
-    const courtNames = Object.keys(matchesByCourt).sort();
-    
-    if (courtNames.length === 0 && matchesNoCourt.length === 0) {
+    if (sortedMatches.length === 0) {
       return (
         <View style={styles.emptyBracket}>
           <Ionicons name="list-outline" size={48} color={Colors.textLight} />
@@ -386,93 +419,93 @@ export default function BracketScreen() {
       );
     }
 
+    const getStatusLabel = (m: Match) => {
+      const isFinished = m.is_finished || !!m.winner_id;
+      const isRunning = !isFinished && !!m.court;
+      const isReady = !isFinished && !m.court && !!m.team1 && !!m.team2;
+
+      if (isFinished) return { label: 'Terminé', color: Colors.success, icon: 'checkmark-circle' };
+      if (isRunning) return { label: 'En cours', color: Colors.primary, icon: 'play-circle' };
+      if (isReady) return { label: 'En attente', color: Colors.warning, icon: 'time' };
+      return { label: 'À venir', color: Colors.textLight, icon: 'hourglass-outline' };
+    };
+
     return (
       <View style={styles.passagesContainer}>
-        {courtNames.map(courtName => (
-          <View key={courtName} style={styles.courtSection}>
-            <View style={styles.courtHeader}>
-              <Ionicons name="location" size={20} color={Colors.primary} />
-              <Text style={styles.courtTitle}>{courtName}</Text>
-            </View>
-            {matchesByCourt[courtName].map((item, idx) => (
-              <TouchableOpacity
-                key={item.match.id}
-                style={[
-                  styles.passageCard,
-                  item.match.is_finished && styles.passageCardFinished,
-                  !item.match.team1 || !item.match.team2 ? styles.passageCardPending : null
-                ]}
-                onPress={() => openScoreModal(item.match)}
-                disabled={item.match.is_finished || !item.match.team1 || !item.match.team2}
-              >
-                <View style={styles.passageNumber}>
-                  <Text style={styles.passageNumberText}>{idx + 1}</Text>
+        {/* En-tête du tableau */}
+        <View style={styles.tableHeader}>
+          <Text style={[styles.tableHeaderText, { width: 40, textAlign: 'center' }]}>#</Text>
+          <Text style={[styles.tableHeaderText, { flex: 1 }]}>Match</Text>
+          <Text style={[styles.tableHeaderText, { width: 80 }]}>Statut</Text>
+          <Text style={[styles.tableHeaderText, { width: 60 }]}>Terrain</Text>
+        </View>
+
+        {sortedMatches.map((item, index) => {
+          const status = getStatusLabel(item.match);
+          const canEnterScore = item.match.team1 && item.match.team2 && (!item.match.is_finished && !item.match.winner_id);
+
+          return (
+            <TouchableOpacity
+              key={item.match.id}
+              style={[
+                styles.tableRow,
+                item.match.is_finished && styles.tableRowFinished
+              ]}
+              onPress={() => canEnterScore && openScoreModal(item.match)}
+              disabled={!canEnterScore}
+            >
+              {/* Numéro */}
+              <View style={styles.tableCellIndex}>
+                <Text style={styles.indexText}>{index + 1}</Text>
+              </View>
+
+              {/* Infos Match */}
+              <View style={styles.tableCellMatch}>
+                <Text style={styles.roundNameText}>{item.roundName}</Text>
+                <View style={styles.matchTeamsRow}>
+                  <Text style={[
+                    styles.teamNameText,
+                    item.match.winner_id === item.match.team1?.id && styles.winnerText
+                  ]}>
+                    {getTeamDisplayName(item.match.team1)}
+                  </Text>
+                  <Text style={styles.vsText}>vs</Text>
+                  <Text style={[
+                    styles.teamNameText,
+                    item.match.winner_id === item.match.team2?.id && styles.winnerText
+                  ]}>
+                    {getTeamDisplayName(item.match.team2)}
+                  </Text>
                 </View>
-                <View style={styles.passageContent}>
-                  <Text style={styles.passageRound}>{item.roundName}</Text>
-                  <View style={styles.passageTeams}>
-                    <Text style={[
-                      styles.passageTeamName,
-                      item.match.winner_id === item.match.team1?.id && styles.passageTeamWinner
-                    ]}>
-                      {getTeamDisplayName(item.match.team1)}
-                    </Text>
-                    <Text style={styles.passageVs}>vs</Text>
-                    <Text style={[
-                      styles.passageTeamName,
-                      item.match.winner_id === item.match.team2?.id && styles.passageTeamWinner
-                    ]}>
-                      {getTeamDisplayName(item.match.team2)}
-                    </Text>
-                  </View>
-                </View>
-                <View style={styles.passageStatus}>
-                  {item.match.is_finished ? (
-                    <View style={styles.passageScoreContainer}>
-                      <Text style={styles.passageScore}>{item.match.score}</Text>
-                      <Ionicons name="checkmark-circle" size={18} color={Colors.success} />
-                    </View>
-                  ) : item.match.team1 && item.match.team2 ? (
-                    <Text style={styles.passageWaiting}>À jouer</Text>
-                  ) : (
-                    <Text style={styles.passagePending}>En attente</Text>
-                  )}
-                </View>
-              </TouchableOpacity>
-            ))}
-          </View>
-        ))}
-        
-        {matchesNoCourt.length > 0 && (
-          <View style={styles.courtSection}>
-            <View style={styles.courtHeader}>
-              <Ionicons name="help-circle" size={20} color={Colors.textSecondary} />
-              <Text style={styles.courtTitle}>Sans terrain assigné</Text>
-            </View>
-            {matchesNoCourt.map((item, idx) => (
-              <View key={item.match.id} style={[styles.passageCard, styles.passageCardNoCourt]}>
-                <View style={styles.passageNumber}>
-                  <Text style={styles.passageNumberText}>?</Text>
-                </View>
-                <View style={styles.passageContent}>
-                  <Text style={styles.passageRound}>{item.roundName}</Text>
-                  <View style={styles.passageTeams}>
-                    <Text style={styles.passageTeamName}>{getTeamDisplayName(item.match.team1)}</Text>
-                    <Text style={styles.passageVs}>vs</Text>
-                    <Text style={styles.passageTeamName}>{getTeamDisplayName(item.match.team2)}</Text>
-                  </View>
-                </View>
-                <View style={styles.passageStatus}>
-                  {item.match.is_finished ? (
-                    <Text style={styles.passageScore}>{item.match.score}</Text>
-                  ) : (
-                    <Text style={styles.passagePending}>En attente</Text>
-                  )}
+                {item.match.score && (
+                  <Text style={styles.scoreText}>{item.match.score}</Text>
+                )}
+              </View>
+
+              {/* Statut */}
+              <View style={styles.tableCellStatus}>
+                <View style={[styles.statusBadge, { backgroundColor: status.color + '20' }]}>
+                  <Text style={[styles.statusText, { color: status.color }]}>
+                    {status.label}
+                  </Text>
                 </View>
               </View>
-            ))}
-          </View>
-        )}
+
+              {/* Terrain */}
+              <View style={styles.tableCellCourt}>
+                {item.match.court ? (
+                  <View style={styles.courtBadgeSmall}>
+                    <Text style={styles.courtTextSmall} numberOfLines={1}>
+                      {item.match.court.name}
+                    </Text>
+                  </View>
+                ) : (
+                  <Text style={styles.noCourtText}>-</Text>
+                )}
+              </View>
+            </TouchableOpacity>
+          );
+        })}
       </View>
     );
   };
@@ -564,17 +597,17 @@ export default function BracketScreen() {
             <Text style={styles.headerTitle}>Bracket</Text>
             <View style={styles.headerButton} />
           </View>
-          
+
           {/* Onglets */}
           <View style={styles.tabsContainer}>
             <TouchableOpacity
               style={[styles.tab, activeTab === 'winner' && styles.tabActive]}
               onPress={() => setActiveTab('winner')}
             >
-              <Ionicons 
-                name="trophy" 
-                size={18} 
-                color={activeTab === 'winner' ? Colors.primary : Colors.textInverse} 
+              <Ionicons
+                name="trophy"
+                size={18}
+                color={activeTab === 'winner' ? Colors.primary : Colors.textInverse}
               />
               <Text style={[styles.tabtextab, activeTab === 'winner' && styles.tabTextActive]}>
                 Tableau
@@ -584,10 +617,10 @@ export default function BracketScreen() {
               style={[styles.tab, activeTab === 'classification' && styles.tabActive]}
               onPress={() => setActiveTab('classification')}
             >
-              <Ionicons 
-                name="medal" 
-                size={18} 
-                color={activeTab === 'classification' ? Colors.primary : Colors.textInverse} 
+              <Ionicons
+                name="medal"
+                size={18}
+                color={activeTab === 'classification' ? Colors.primary : Colors.textInverse}
               />
               <Text style={[styles.tabtextab, activeTab === 'classification' && styles.tabTextActive]}>
                 Classement
@@ -597,10 +630,10 @@ export default function BracketScreen() {
               style={[styles.tab, activeTab === 'passages' && styles.tabActive]}
               onPress={() => setActiveTab('passages')}
             >
-              <Ionicons 
-                name="list" 
-                size={18} 
-                color={activeTab === 'passages' ? Colors.primary : Colors.textInverse} 
+              <Ionicons
+                name="list"
+                size={18}
+                color={activeTab === 'passages' ? Colors.primary : Colors.textInverse}
               />
               <Text style={[styles.tabtextab, activeTab === 'passages' && styles.tabTextActive]}>
                 Passages
@@ -610,10 +643,10 @@ export default function BracketScreen() {
               style={[styles.tab, activeTab === 'results' && styles.tabActive]}
               onPress={() => setActiveTab('results')}
             >
-              <Ionicons 
-                name="podium" 
-                size={18} 
-                color={activeTab === 'results' ? Colors.primary : Colors.textInverse} 
+              <Ionicons
+                name="podium"
+                size={18}
+                color={activeTab === 'results' ? Colors.primary : Colors.textInverse}
               />
               <Text style={[styles.tabtextab, activeTab === 'results' && styles.tabTextActive]}>
                 Points
@@ -718,7 +751,7 @@ export default function BracketScreen() {
 
                 {/* Scores par set */}
                 <Text style={styles.label}>Score</Text>
-                
+
                 {/* Set 1 */}
                 <View style={styles.setRow}>
                   <Text style={styles.setLabel}>Set 1</Text>
@@ -870,7 +903,7 @@ const styles = StyleSheet.create({
     color: Colors.textInverse,
     fontWeight: '500',
   },
-  tabtextab:{
+  tabtextab: {
     fontSize: FontSizes.xs,
     color: Colors.textInverse,
     fontWeight: '500',
@@ -1379,6 +1412,118 @@ const styles = StyleSheet.create({
   },
   passagePending: {
     fontSize: FontSizes.xs,
+    color: Colors.textLight,
+  },
+  // Table Styles
+  tableHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.sm,
+    backgroundColor: Colors.surface,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+    borderTopLeftRadius: BorderRadius.md,
+    borderTopRightRadius: BorderRadius.md,
+    marginBottom: 2,
+  },
+  tableHeaderText: {
+    fontSize: FontSizes.xs,
+    fontWeight: '600',
+    color: Colors.textSecondary,
+    textTransform: 'uppercase',
+  },
+  tableRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.sm,
+    backgroundColor: Colors.surface,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.background,
+    minHeight: 60,
+  },
+  tableRowFinished: {
+    opacity: 0.7,
+  },
+  tableCellIndex: {
+    width: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  indexText: {
+    fontSize: FontSizes.sm,
+    fontWeight: 'bold',
+    color: Colors.textSecondary,
+  },
+  tableCellMatch: {
+    flex: 1,
+    paddingHorizontal: Spacing.sm,
+    justifyContent: 'center',
+  },
+  roundNameText: {
+    fontSize: 10,
+    color: Colors.textLight,
+    marginBottom: 2,
+    textTransform: 'uppercase',
+  },
+  matchTeamsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+  },
+  teamNameText: {
+    fontSize: FontSizes.sm,
+    color: Colors.text,
+  },
+  winnerText: {
+    fontWeight: 'bold',
+    color: Colors.primary,
+  },
+  vsText: {
+    fontSize: FontSizes.xs,
+    color: Colors.textLight,
+    marginHorizontal: 4,
+  },
+  scoreText: {
+    fontSize: FontSizes.xs,
+    fontWeight: 'bold',
+    color: Colors.primary,
+    marginTop: 2,
+  },
+  tableCellStatus: {
+    width: 80,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  statusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  statusText: {
+    fontSize: 10,
+    fontWeight: 'bold',
+  },
+  tableCellCourt: {
+    width: 60,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  courtBadgeSmall: {
+    backgroundColor: Colors.background,
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  courtTextSmall: {
+    fontSize: 10,
+    color: Colors.textSecondary,
+  },
+  noCourtText: {
+    fontSize: FontSizes.sm,
     color: Colors.textLight,
   },
 });

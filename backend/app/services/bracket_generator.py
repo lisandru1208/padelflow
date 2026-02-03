@@ -268,7 +268,8 @@ def generate_bracket(db, tournament_id: str, court_ids: list = None):
     # MATCHS DE CLASSEMENT
     # ============================================
     
-    create_classification_matches(db, tournament_id, round_count, bracket_size, num_teams, stored_court_ids)
+    # Passer l'index de terrain actuel pour continuer la rotation
+    create_classification_matches(db, tournament_id, round_count, bracket_size, num_teams, stored_court_ids, start_court_idx=court_idx)
 
     return {
         "success": True,
@@ -394,11 +395,11 @@ def get_seed_slot_positions(bracket_size):
         return {1: 0, 2: bracket_size - 1}
 
 
-def create_classification_matches(db, tournament_id: str, round_count: int, bracket_size: int, total_teams: int, court_ids: list = None):
+def create_classification_matches(db, tournament_id: str, round_count: int, bracket_size: int, total_teams: int, court_ids: list = None, start_court_idx: int = 0):
     """
     Génère tous les matchs de classement pour déterminer un classement complet.
     """
-    court_idx = 0
+    court_idx = start_court_idx
     
     def get_next_court():
         nonlocal court_idx
