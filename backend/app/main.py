@@ -3,6 +3,14 @@ from app.routers import health, auth, clubs, courts, tournaments, teams, bracket
 
 app = FastAPI(title="PadelFlow API")
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.include_router(health.router)
 app.include_router(auth.router)
 app.include_router(clubs.router)
