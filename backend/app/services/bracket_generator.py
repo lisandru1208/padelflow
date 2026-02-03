@@ -94,21 +94,14 @@ def generate_bracket(db, tournament_id: str, court_ids: list = None):
         print(f"Round créé: {round_name} (order={i+1})")
 
     # ============================================
-    # CRÉER TOUS LES MATCHS VIDES AVEC TERRAINS
+    # CRÉER TOUS LES MATCHS VIDES (SANS TERRAINS)
     # ============================================
     
     all_matches = {}  # {(round_idx, match_order): match}
-    court_idx = 0  # Index pour rotation des terrains
     
     for round_idx, round_obj in enumerate(rounds):
         matches_in_round = bracket_size // (2 ** (round_idx + 1))
         for match_num in range(1, matches_in_round + 1):
-            # Assigner un terrain en rotation
-            court_id = None
-            if stored_court_ids and len(stored_court_ids) > 0:
-                court_id = stored_court_ids[court_idx % len(stored_court_ids)]
-                court_idx += 1
-            
             match = Match(
                 round_id=round_obj.id,
                 match_order=match_num,
@@ -116,13 +109,13 @@ def generate_bracket(db, tournament_id: str, court_ids: list = None):
                 team2_id=None,
                 bracket_type='winner',
                 is_finished=False,
-                court_id=court_id
+                court_id=None # Sera assigné globalement à la fin
             )
             db.add(match)
             db.commit()
             db.refresh(match)
             all_matches[(round_idx, match_num)] = match
-        print(f"  Round {round_idx}: {matches_in_round} matchs créés avec terrains")
+        print(f"  Round {round_idx}: {matches_in_round} matchs créés (sans terrain)")
 
     # ============================================
     # PRÉPARER LES ÉQUIPES
@@ -268,8 +261,13 @@ def generate_bracket(db, tournament_id: str, court_ids: list = None):
     # MATCHS DE CLASSEMENT
     # ============================================
     
-    # Passer l'index de terrain actuel pour continuer la rotation
-    create_classification_matches(db, tournament_id, round_count, bracket_size, num_teams, stored_court_ids, start_court_idx=court_idx)
+    # Plus besoin de passer l'index
+    create_classification_matches(db, tournament_id, round_count, bracket_size, num_teams)
+
+    # ============================================
+    # ASSIGNATION GLOBALE DES TERRAINS
+    # ============================================
+    assign_courts_globally(db, tournament_id, stored_court_ids)
 
     return {
         "success": True,
@@ -395,20 +393,10 @@ def get_seed_slot_positions(bracket_size):
         return {1: 0, 2: bracket_size - 1}
 
 
-def create_classification_matches(db, tournament_id: str, round_count: int, bracket_size: int, total_teams: int, court_ids: list = None, start_court_idx: int = 0):
+def create_classification_matches(db, tournament_id: str, round_count: int, bracket_size: int, total_teams: int):
     """
     Génère tous les matchs de classement pour déterminer un classement complet.
     """
-    court_idx = start_court_idx
-    
-    def get_next_court():
-        nonlocal court_idx
-        if court_ids and len(court_ids) > 0:
-            court_id = court_ids[court_idx % len(court_ids)]
-            court_idx += 1
-            return court_id
-        return None
-
     # Pour chaque tour principal (sauf la finale), les perdants basculent dans un tableau de classement
     for main_round_idx in range(round_count - 1):
         # Par défaut, tous les matchs du tour génèrent un perdant
@@ -453,7 +441,6 @@ def create_classification_matches(db, tournament_id: str, round_count: int, brac
             num_teams=num_losers, 
             start_rank=best_rank, 
             base_round_order=100 * (main_round_idx + 1),
-            get_court_func=get_next_court,
             total_teams=total_teams
         )
     
@@ -461,7 +448,7 @@ def create_classification_matches(db, tournament_id: str, round_count: int, brac
 
 
 
-def create_sub_bracket(db, tournament_id, num_teams, start_rank, base_round_order, get_court_func, total_teams):
+def create_sub_bracket(db, tournament_id, num_teams, start_rank, base_round_order, total_teams):
     """
     Fonction récursive pour créer un arbre de classement.
     """
@@ -492,7 +479,7 @@ def create_sub_bracket(db, tournament_id, num_teams, start_rank, base_round_orde
             team2_id=None,
             bracket_type='loser_final', # Marqueur final
             classification_rank=start_rank,
-            court_id=get_court_func()
+            court_id=None # Sera assigné globalement
         )
         db.add(m)
         print(f"    - Créé: {round_name} (Rank {start_rank})")
@@ -529,7 +516,7 @@ def create_sub_bracket(db, tournament_id, num_teams, start_rank, base_round_orde
             team2_id=None,
             bracket_type='loser_node', # Noeud intermédiaire
             classification_rank=start_rank, 
-            court_id=get_court_func()
+            court_id=None # Sera assigné globalement
         )
         db.add(m)
     
@@ -545,7 +532,6 @@ def create_sub_bracket(db, tournament_id, num_teams, start_rank, base_round_orde
         num_teams=num_teams // 2,
         start_rank=start_rank,
         base_round_order=base_round_order + 10,
-        get_court_func=get_court_func,
         total_teams=total_teams
     )
     
@@ -556,6 +542,66 @@ def create_sub_bracket(db, tournament_id, num_teams, start_rank, base_round_orde
         num_teams=num_teams // 2,
         start_rank=mid_rank + 1,
         base_round_order=base_round_order + 20,
-        get_court_func=get_court_func,
         total_teams=total_teams
     )
+
+def assign_courts_globally(db, tournament_id: str, court_ids: list):
+    """
+    Remplissage global des terrains après génération complète du tournoi.
+    Trie tous les matchs par ordre chronologique virtuel et distribue les terrains
+    de manière rotative continue.
+    """
+    if not court_ids:
+        print("Aucun terrain disponible pour l'assignation globale.")
+        return
+
+    # 1. Récupérer tous les rounds pour avoir leur ordre
+    rounds = db.query(Round).filter(Round.tournament_id == tournament_id).all()
+    round_map = {r.id: r.order for r in rounds}
+
+    # 2. Récupérer tous les matchs
+    matches = db.query(Match).join(Round).filter(Round.tournament_id == tournament_id).all()
+
+    # 3. Fonction de tri (Virtual Order)
+    def get_sort_key(match):
+        round_order = round_map.get(match.round_id, 9999)
+        
+        # Virtual Order Logic
+        if round_order < 100:
+            virtual_order = float(round_order)
+        else:
+            base = round_order // 100
+            sub = (round_order % 100) / 100.0
+            virtual_order = base + 0.5 + sub
+        
+        return (virtual_order, match.match_order)
+
+    # 4. Trier les matchs
+    sorted_matches = sorted(matches, key=get_sort_key)
+
+    # 5. Assigner les terrains
+    court_idx = 0
+    assigned_count = 0
+    
+    print(f"Assignation globale des terrains ({len(court_ids)} terrains, {len(sorted_matches)} matchs)...")
+    
+    for match in sorted_matches:
+        # On assigne un terrain à TOUS les matchs, même s'ils ne sont pas prêts
+        # Cela permet de remplir les créneaux futurs
+        
+        # Si c'est un BYE (déjà fini sans vainqueur reél ou score BYE), on saute ?
+        # Normalement les BYE ont déjà été nettoyés, mais par sécurité :
+        if match.is_finished and match.score == "BYE":
+            match.court_id = None
+            continue
+            
+        court_id = court_ids[court_idx % len(court_ids)]
+        match.court_id = court_id
+        court_idx += 1
+        assigned_count += 1
+        
+        # Debug
+        # print(f"  Match {match.id[:4]} (R{round_map.get(match.round_id)}) -> Court {court_id}")
+
+    db.commit()
+    print(f"-> {assigned_count} terrains assignés.")

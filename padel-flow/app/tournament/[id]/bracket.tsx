@@ -360,48 +360,96 @@ export default function BracketScreen() {
       });
     });
 
-    // Définir le statut pour le tri
-    const getStatusWeight = (m: Match) => {
-      const isFinished = m.is_finished || !!m.winner_id;
-      const isRunning = !isFinished && !!m.court;
-      const isReady = !isFinished && !m.court && !!m.team1 && !!m.team2;
-
-      if (isRunning) return 0; // En cours (Priorité 1)
-      if (isReady) return 1;   // En attente (Priorité 2)
-      if (isFinished) return 3; // Terminé (Priorité 4 - Fin)
-      return 2;                // A venir / Incomplet (Priorité 3)
-    };
-
     // Helper pour normaliser l'ordre des rounds (intercaler Winner et Loser)
     const getVirtualRoundOrder = (roundOrder: number) => {
-      // Les rounds du Winner Bracket sont 1, 2, 3...
-      // Les rounds du Loser Bracket sont basés sur 100 * round_idx (100, 200...)
-      // On veut : Winner R1 (1) -> Loser R1 (100 -> 1.5) -> Winner R2 (2) -> ...
-
       if (roundOrder < 100) return roundOrder;
-
       const baseRound = Math.floor(roundOrder / 100);
-      // On ajoute 0.5 pour le placer après le round principal correspondant
-      // Les sous-rounds (+10, +20) seront 1.6, 1.7 etc.
-      const subOrder = (roundOrder % 100) / 100; // 0.1, 0.2
+      const subOrder = (roundOrder % 100) / 100;
       return baseRound + 0.5 + subOrder;
     };
 
-    return allMatches.sort((a, b) => {
-      const statusA = getStatusWeight(a.match);
-      const statusB = getStatusWeight(b.match);
+    // 1. D'abord on trie par ordre logique pur pour déterminer l'ordre de passage sur les terrains
+    allMatches.sort((a, b) => {
+      // Priorité 1: Ordre des rounds (intercalé)
+      const vA = getVirtualRoundOrder(a.roundOrder);
+      const vB = getVirtualRoundOrder(b.roundOrder);
+      if (Math.abs(vA - vB) > 0.01) return vA - vB;
 
-      if (statusA !== statusB) return statusA - statusB;
-
-      // Si même statut, trier par ordre chronologique virtuel (intercalé)
-      const virtualOrderA = getVirtualRoundOrder(a.roundOrder);
-      const virtualOrderB = getVirtualRoundOrder(b.roundOrder);
-
-      if (Math.abs(virtualOrderA - virtualOrderB) > 0.01) {
-        return virtualOrderA - virtualOrderB;
-      }
+      // Priorité 2: Ordre du match
       return a.match.match_order - b.match.match_order;
     });
+
+    // 2. Identifier le statut réel (Gérer la file d'attente par terrain)
+    const courtQueues: Record<string, number> = {}; // courtId -> nb matchs non terminés avant
+
+    const matchesWithStatus = allMatches.map(item => {
+      const m = item.match;
+      let statusType = 'future'; // pending, running, waiting_court, waiting_assign, finished
+      let statusLabel = 'À venir';
+      let statusColor = Colors.textLight;
+      let statusIcon = 'hourglass-outline';
+
+      const isFinished = m.is_finished || !!m.winner_id;
+
+      if (isFinished) {
+        statusType = 'finished';
+        statusLabel = 'Terminé';
+        statusColor = Colors.success;
+        statusIcon = 'checkmark-circle';
+      } else if (m.court) {
+        // Le match a un terrain assigné. Est-il le premier dispo sur ce terrain?
+        const courtId = m.court.id || m.court.name;
+        const queuePos = courtQueues[courtId] || 0;
+
+        // Un match est "En cours" s'il est 1er dans la file ET que les équipes sont connues
+        if (queuePos === 0 && m.team1 && m.team2) {
+          statusType = 'running';
+          statusLabel = 'En cours';
+          statusColor = Colors.primary;
+          statusIcon = 'play-circle';
+        } else {
+          statusType = 'waiting_court';
+          statusLabel = m.team1 && m.team2 ? `Attente T. (${queuePos + 1})` : 'Planifié';
+          statusColor = Colors.warning;
+          statusIcon = 'time';
+        }
+
+        courtQueues[courtId] = queuePos + 1;
+      } else if (m.team1 && m.team2) {
+        statusType = 'waiting_assign';
+        statusLabel = 'En attente';
+        statusColor = Colors.warning;
+        statusIcon = 'time';
+      }
+
+      return { ...item, statusType, statusLabel, statusColor, statusIcon };
+    });
+
+    // 3. Trier pour l'affichage final (Par statut puis par ordre logique)
+    return matchesWithStatus.sort((a, b) => {
+      // Priorité Statut
+      const getPriority = (type: string) => {
+        switch (type) {
+          case 'running': return 0;
+          case 'waiting_court': return 1;
+          case 'waiting_assign': return 2;
+          case 'finished': return 4;
+          default: return 3; // future
+        }
+      };
+
+      const pA = getPriority(a.statusType);
+      const pB = getPriority(b.statusType);
+      if (pA !== pB) return pA - pB;
+
+      // Ensuite ordre logique (déjà calculé via le premier sort, mais on réapplique pour être sûr)
+      const vA = getVirtualRoundOrder(a.roundOrder);
+      const vB = getVirtualRoundOrder(b.roundOrder);
+      if (Math.abs(vA - vB) > 0.01) return vA - vB;
+
+      return a.match.match_order - b.match.match_order;
+    });
+
   }, [winnerRounds, classificationRounds]);
 
   const getTeamDisplayName = (team: Team | undefined | null): string => {
@@ -419,16 +467,7 @@ export default function BracketScreen() {
       );
     }
 
-    const getStatusLabel = (m: Match) => {
-      const isFinished = m.is_finished || !!m.winner_id;
-      const isRunning = !isFinished && !!m.court;
-      const isReady = !isFinished && !m.court && !!m.team1 && !!m.team2;
 
-      if (isFinished) return { label: 'Terminé', color: Colors.success, icon: 'checkmark-circle' };
-      if (isRunning) return { label: 'En cours', color: Colors.primary, icon: 'play-circle' };
-      if (isReady) return { label: 'En attente', color: Colors.warning, icon: 'time' };
-      return { label: 'À venir', color: Colors.textLight, icon: 'hourglass-outline' };
-    };
 
     return (
       <View style={styles.passagesContainer}>
@@ -441,17 +480,20 @@ export default function BracketScreen() {
         </View>
 
         {sortedMatches.map((item, index) => {
-          const status = getStatusLabel(item.match);
-          const canEnterScore = item.match.team1 && item.match.team2 && (!item.match.is_finished && !item.match.winner_id);
+          // Utiliser le statut pré-calculé
+          const { match, statusLabel, statusColor, statusType } = item;
+          const isFinished = statusType === 'finished';
+          const canEnterScore = match.team1 && match.team2 && !match.winner_id;
 
           return (
             <TouchableOpacity
-              key={item.match.id}
+              key={match.id}
               style={[
                 styles.tableRow,
-                item.match.is_finished && styles.tableRowFinished
+                isFinished && styles.tableRowFinished,
+                statusType === 'running' && { backgroundColor: Colors.primary + '10' }
               ]}
-              onPress={() => canEnterScore && openScoreModal(item.match)}
+              onPress={() => canEnterScore && openScoreModal(match)}
               disabled={!canEnterScore}
             >
               {/* Numéro */}
@@ -465,28 +507,28 @@ export default function BracketScreen() {
                 <View style={styles.matchTeamsRow}>
                   <Text style={[
                     styles.teamNameText,
-                    item.match.winner_id === item.match.team1?.id && styles.winnerText
+                    match.winner_id === match.team1?.id && styles.winnerText
                   ]}>
-                    {getTeamDisplayName(item.match.team1)}
+                    {getTeamDisplayName(match.team1)}
                   </Text>
                   <Text style={styles.vsText}>vs</Text>
                   <Text style={[
                     styles.teamNameText,
-                    item.match.winner_id === item.match.team2?.id && styles.winnerText
+                    match.winner_id === match.team2?.id && styles.winnerText
                   ]}>
-                    {getTeamDisplayName(item.match.team2)}
+                    {getTeamDisplayName(match.team2)}
                   </Text>
                 </View>
-                {item.match.score && (
-                  <Text style={styles.scoreText}>{item.match.score}</Text>
+                {match.score && (
+                  <Text style={styles.scoreText}>{match.score}</Text>
                 )}
               </View>
 
               {/* Statut */}
               <View style={styles.tableCellStatus}>
-                <View style={[styles.statusBadge, { backgroundColor: status.color + '20' }]}>
-                  <Text style={[styles.statusText, { color: status.color }]}>
-                    {status.label}
+                <View style={[styles.statusBadge, { backgroundColor: statusColor + '20' }]}>
+                  <Text style={[styles.statusText, { color: statusColor }]} numberOfLines={1}>
+                    {statusLabel}
                   </Text>
                 </View>
               </View>
