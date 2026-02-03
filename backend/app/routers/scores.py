@@ -147,273 +147,63 @@ def propagate_winner(db: Session, match: Match):
 
 
 def propagate_loser(db: Session, match: Match, loser_id: str):
-    """Propage le perdant vers les matchs de classement appropriés"""
+    """Propage le perdant vers le tableau de classement approprié"""
+    current_round = db.query(Round).filter(Round.id == match.round_id).first()
+    if not current_round:
+        return
+
+    # Si on est DÉJÀ dans un tableau de classement
     if match.bracket_type != 'winner':
-        # Si c'est déjà un match de classement, propager vers le match suivant
-        propagate_loser_bracket_winner(db, match)
-        propagate_loser_bracket_loser(db, match, loser_id)
+        propagate_sub_bracket(db, match, current_round, loser_id)
         return
+
+    # Si on est dans le tableau principal
+    # Loser va vers Order = current_round.order * 100
+    target_round_order = current_round.order * 100
     
-    current_round = db.query(Round).filter(Round.id == match.round_id).first()
-    if not current_round:
-        return
+    print(f"Propagating Main Loser -> Round Order {target_round_order}")
+    propagate_to_round(db, current_round.tournament_id, target_round_order, match.match_order, loser_id)
+
+
+def propagate_sub_bracket(db: Session, match: Match, current_round: Round, loser_id: str):
+    """Gère la propagation dans les tableaux de classement (vainqueur -> upper, perdant -> lower)"""
     
-    tournament_id = current_round.tournament_id
-    round_name = current_round.name
+    if match.bracket_type == 'loser_final':
+        return # Fin du chemin
+
+    # Vainqueur -> Upper (+10)
+    upper_round_order = current_round.order + 10
+    propagate_to_round(db, current_round.tournament_id, upper_round_order, match.match_order, match.winner_id)
     
-    print(f"=== PROPAGATION PERDANT ===")
-    print(f"Round: {round_name}, Match: {match.match_order}, Loser: {loser_id}")
+    # Perdant -> Lower (+20)
+    lower_round_order = current_round.order + 20
+    propagate_to_round(db, current_round.tournament_id, lower_round_order, match.match_order, loser_id)
+
+
+def propagate_to_round(db: Session, tournament_id: str, target_order: int, source_match_order: int, team_id: str):
+    """Helper générique pour déplacer une équipe vers le round cible"""
+    target_round = db.query(Round).filter(
+        Round.tournament_id == tournament_id,
+        Round.order == target_order
+    ).first()
     
-    # Demi-finales → Match 3ème place
-    if round_name == "Demi-finales":
-        round_3rd = db.query(Round).filter(
-            Round.tournament_id == tournament_id,
-            Round.name == "Match 3ème place"
+    if target_round:
+        target_match_order = (source_match_order + 1) // 2
+        target_match = db.query(Match).filter(
+            Match.round_id == target_round.id,
+            Match.match_order == target_match_order
         ).first()
         
-        if round_3rd:
-            match_3rd = db.query(Match).filter(
-                Match.round_id == round_3rd.id,
-                Match.match_order == 1
-            ).first()
-            
-            if match_3rd:
-                if match.match_order == 1:
-                    match_3rd.team1_id = loser_id
-                    print(f"  -> Match 3ème place team1")
-                else:
-                    match_3rd.team2_id = loser_id
-                    print(f"  -> Match 3ème place team2")
-                db.commit()
-    
-    # Quarts de finale → Demi-finales 5-8ème
-    elif round_name == "Quarts de finale":
-        round_5th = db.query(Round).filter(
-            Round.tournament_id == tournament_id,
-            Round.name == "Demi-finales 5-8ème"
-        ).first()
-        
-        if round_5th:
-            # 4 perdants des quarts → 2 matchs
-            # Match 1,2 quarts → match 1 loser
-            # Match 3,4 quarts → match 2 loser
-            loser_match_order = (match.match_order + 1) // 2
-            
-            loser_match = db.query(Match).filter(
-                Match.round_id == round_5th.id,
-                Match.match_order == loser_match_order
-            ).first()
-            
-            if loser_match:
-                if match.match_order % 2 == 1:
-                    loser_match.team1_id = loser_id
-                    print(f"  -> Demi 5-8 match {loser_match_order} team1")
-                else:
-                    loser_match.team2_id = loser_id
-                    print(f"  -> Demi 5-8 match {loser_match_order} team2")
-                db.commit()
-    
-    # Huitièmes de finale → Demi-finales 9-12ème
-    elif round_name == "Huitièmes de finale":
-        round_9th = db.query(Round).filter(
-            Round.tournament_id == tournament_id,
-            Round.name == "Demi-finales 9-12ème"
-        ).first()
-        
-        if round_9th:
-            # 8 perdants des huitièmes → 2 matchs (on prend les 4 premiers perdants)
-            # Match 1,2,3,4 huitièmes → match 1 loser (team1 pour impair, team2 pour pair)
-            # Match 5,6,7,8 huitièmes → match 2 loser
-            if match.match_order <= 4:
-                loser_match_order = 1
+        if target_match:
+            # Impair -> Team 1, Pair -> Team 2
+            if source_match_order % 2 == 1:
+                target_match.team1_id = team_id
+                print(f"  -> Target Match {target_match_order} Team 1")
             else:
-                loser_match_order = 2
-            
-            loser_match = db.query(Match).filter(
-                Match.round_id == round_9th.id,
-                Match.match_order == loser_match_order
-            ).first()
-            
-            if loser_match:
-                # Alterner team1/team2 selon match_order
-                if match.match_order % 2 == 1:
-                    loser_match.team1_id = loser_id
-                    print(f"  -> Demi 9-12 match {loser_match_order} team1")
-                else:
-                    loser_match.team2_id = loser_id
-                    print(f"  -> Demi 9-12 match {loser_match_order} team2")
-                db.commit()
-    
-    # 16èmes de finale → Demi-finales 13-16ème
-    elif round_name == "16èmes de finale":
-        round_13th = db.query(Round).filter(
-            Round.tournament_id == tournament_id,
-            Round.name == "Demi-finales 13-16ème"
-        ).first()
-        
-        if round_13th:
-            # 16 perdants des 16èmes → 2 matchs (on prend les 4 premiers perdants)
-            # Match 1,2,3,4 16èmes → match 1 loser
-            # Match 5,6,7,8 16èmes → match 2 loser
-            # (on ignore les matchs 9-16 car pas assez de places)
-            if match.match_order <= 4:
-                loser_match_order = 1
-            elif match.match_order <= 8:
-                loser_match_order = 2
-            else:
-                # Pas de match de classement pour les perdants des matchs 9-16
-                print(f"  -> Pas de match de classement (match_order > 8)")
-                return
-            
-            loser_match = db.query(Match).filter(
-                Match.round_id == round_13th.id,
-                Match.match_order == loser_match_order
-            ).first()
-            
-            if loser_match:
-                # Alterner team1/team2 selon match_order
-                if match.match_order % 2 == 1:
-                    loser_match.team1_id = loser_id
-                    print(f"  -> Demi 13-16 match {loser_match_order} team1")
-                else:
-                    loser_match.team2_id = loser_id
-                    print(f"  -> Demi 13-16 match {loser_match_order} team2")
-                db.commit()
-
-
-def propagate_loser_bracket_winner(db: Session, match: Match):
-    """Propage le vainqueur d'un match de classement vers le match suivant"""
-    current_round = db.query(Round).filter(Round.id == match.round_id).first()
-    if not current_round:
-        return
-    
-    tournament_id = current_round.tournament_id
-    
-    # Si c'est un match des "Demi-finales 5-8ème", le vainqueur va au "Match 5ème place"
-    if current_round.name == "Demi-finales 5-8ème":
-        round_5th_final = db.query(Round).filter(
-            Round.tournament_id == tournament_id,
-            Round.name == "Match 5ème place"
-        ).first()
-        
-        if round_5th_final:
-            match_5th = db.query(Match).filter(
-                Match.round_id == round_5th_final.id,
-                Match.match_order == 1
-            ).first()
-            
-            if match_5th:
-                if match.match_order == 1:
-                    match_5th.team1_id = match.winner_id
-                else:
-                    match_5th.team2_id = match.winner_id
-                db.commit()
-    
-    # Si c'est un match des "Demi-finales 9-12ème", le vainqueur va au "Match 9ème place"
-    elif current_round.name == "Demi-finales 9-12ème":
-        round_9th_final = db.query(Round).filter(
-            Round.tournament_id == tournament_id,
-            Round.name == "Match 9ème place"
-        ).first()
-        
-        if round_9th_final:
-            match_9th = db.query(Match).filter(
-                Match.round_id == round_9th_final.id,
-                Match.match_order == 1
-            ).first()
-            
-            if match_9th:
-                if match.match_order == 1:
-                    match_9th.team1_id = match.winner_id
-                else:
-                    match_9th.team2_id = match.winner_id
-                db.commit()
-    
-    # Si c'est un match des "Demi-finales 13-16ème", le vainqueur va au "Match 13ème place"
-    elif current_round.name == "Demi-finales 13-16ème":
-        round_13th_final = db.query(Round).filter(
-            Round.tournament_id == tournament_id,
-            Round.name == "Match 13ème place"
-        ).first()
-        
-        if round_13th_final:
-            match_13th = db.query(Match).filter(
-                Match.round_id == round_13th_final.id,
-                Match.match_order == 1
-            ).first()
-            
-            if match_13th:
-                if match.match_order == 1:
-                    match_13th.team1_id = match.winner_id
-                else:
-                    match_13th.team2_id = match.winner_id
-                db.commit()
-
-
-def propagate_loser_bracket_loser(db: Session, match: Match, loser_id: str):
-    """Propage le perdant d'un match de classement vers le match suivant"""
-    current_round = db.query(Round).filter(Round.id == match.round_id).first()
-    if not current_round:
-        return
-    
-    tournament_id = current_round.tournament_id
-    
-    # Si c'est un match des "Demi-finales 5-8ème", le perdant va au "Match 7ème place"
-    if current_round.name == "Demi-finales 5-8ème":
-        round_7th = db.query(Round).filter(
-            Round.tournament_id == tournament_id,
-            Round.name == "Match 7ème place"
-        ).first()
-        
-        if round_7th:
-            match_7th = db.query(Match).filter(
-                Match.round_id == round_7th.id,
-                Match.match_order == 1
-            ).first()
-            
-            if match_7th:
-                if match.match_order == 1:
-                    match_7th.team1_id = loser_id
-                else:
-                    match_7th.team2_id = loser_id
-                db.commit()
-    
-    # Si c'est un match des "Demi-finales 9-12ème", le perdant va au "Match 11ème place"
-    elif current_round.name == "Demi-finales 9-12ème":
-        round_11th = db.query(Round).filter(
-            Round.tournament_id == tournament_id,
-            Round.name == "Match 11ème place"
-        ).first()
-        
-        if round_11th:
-            match_11th = db.query(Match).filter(
-                Match.round_id == round_11th.id,
-                Match.match_order == 1
-            ).first()
-            
-            if match_11th:
-                if match.match_order == 1:
-                    match_11th.team1_id = loser_id
-                else:
-                    match_11th.team2_id = loser_id
-                db.commit()
-    
-    # Si c'est un match des "Demi-finales 13-16ème", le perdant va au "Match 15ème place"
-    elif current_round.name == "Demi-finales 13-16ème":
-        round_15th = db.query(Round).filter(
-            Round.tournament_id == tournament_id,
-            Round.name == "Match 15ème place"
-        ).first()
-        
-        if round_15th:
-            match_15th = db.query(Match).filter(
-                Match.round_id == round_15th.id,
-                Match.match_order == 1
-            ).first()
-            
-            if match_15th:
-                if match.match_order == 1:
-                    match_15th.team1_id = loser_id
-                else:
-                    match_15th.team2_id = loser_id
-                db.commit()
+                target_match.team2_id = team_id
+                print(f"  -> Target Match {target_match_order} Team 2")
+            db.commit()
+        else:
+            print(f"  -> Target Match {target_match_order} NOT FOUND in Round {target_order}")
+    else:
+        print(f"  -> Target Round {target_order} NOT FOUND")
