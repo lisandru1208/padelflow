@@ -181,7 +181,7 @@ def generate_pools(db: Session, tournament_id: str, court_ids: List[str] = None)
     direct_qualifiers = all_teams_sorted[:num_bye_ts] # Les X premiers
     teams_for_pools = all_teams_sorted[num_bye_ts:]   # Le reste
     
-    print(f"Direct Qualifiers ({num_bye_ts}): {[t.name for t in direct_qualifiers]}")
+    print(f"Direct Qualifiers ({num_bye_ts}): {[str(t.id) for t in direct_qualifiers]}")
     print(f"Teams in Pools ({len(teams_for_pools)}): Expecting {sum(config['teams_per_pool'])}")
     
     # Parmi les équipes de poules, on sépare Seeded / Unseeded pour bien répartir
@@ -366,7 +366,7 @@ def generate_final_phase_from_pools(db: Session, tournament_id: str, court_ids: 
     # Tri par seed
     direct_qualifiers.sort(key=lambda t: t.seed_position or 9999)
     
-    print(f"Direct Qualifiers ({len(direct_qualifiers)}): {[t.name for t in direct_qualifiers]}")
+    print(f"Direct Qualifiers ({len(direct_qualifiers)}): {[str(t.id) for t in direct_qualifiers]}")
     
     # 4. Pool Qualifiers
     pools = db.query(Pool).filter(Pool.tournament_id == tournament_id).order_by(Pool.pool_order).all()
