@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from app.routers import health, auth, clubs, courts, tournaments, teams, brackets, matches, scores, pools
 
 app = FastAPI(title="PadelFlow API")
