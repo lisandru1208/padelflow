@@ -570,5 +570,71 @@ def create_classification_matches(db, tournament_id: str, round_count: int, brac
             court_id=get_next_court()
         )
         db.add(match_11th)
+    
+    if round_count >= 5:
+        # Demi-finales pour 13-16ème place (perdants des 16èmes)
+        r_13th_semi = Round(
+            tournament_id=tournament_id,
+            name="Demi-finales 13-16ème",
+            order=107
+        )
+        db.add(r_13th_semi)
+        db.commit()
+        db.refresh(r_13th_semi)
+        
+        # 2 matchs de demi pour la 13-16ème place
+        for i in range(2):
+            match = Match(
+                round_id=r_13th_semi.id,
+                match_order=i + 1,
+                team1_id=None,
+                team2_id=None,
+                bracket_type='loser',
+                classification_rank=13,
+                court_id=get_next_court()
+            )
+            db.add(match)
+        
+        # Match pour 13ème place
+        r_13th_final = Round(
+            tournament_id=tournament_id,
+            name="Match 13ème place",
+            order=108
+        )
+        db.add(r_13th_final)
+        db.commit()
+        db.refresh(r_13th_final)
+        
+        match_13th = Match(
+            round_id=r_13th_final.id,
+            match_order=1,
+            team1_id=None,
+            team2_id=None,
+            bracket_type='loser',
+            classification_rank=13,
+            court_id=get_next_court()
+        )
+        db.add(match_13th)
+        
+        # Match pour 15ème place
+        r_15th = Round(
+            tournament_id=tournament_id,
+            name="Match 15ème place",
+            order=109
+        )
+        db.add(r_15th)
+        db.commit()
+        db.refresh(r_15th)
+        
+        match_15th = Match(
+            round_id=r_15th.id,
+            match_order=1,
+            team1_id=None,
+            team2_id=None,
+            bracket_type='loser',
+            classification_rank=15,
+            court_id=get_next_court()
+        )
+        db.add(match_15th)
 
     db.commit()
