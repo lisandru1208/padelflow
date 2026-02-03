@@ -283,62 +283,41 @@ def generate_bracket(db, tournament_id: str, court_ids: list = None):
 
 def place_teams_in_bracket(seeded_teams, unseeded_teams, bracket_size, num_byes):
     """
-    Place les équipes dans le bracket avec les BYE aux bonnes positions.
-    Les têtes de série reçoivent les BYE en priorité.
-    
-    Returns: Liste de slots [Team, Team, None (BYE), Team, ...]
+    Nouvelle logique :
+    - Les meilleurs seeds vont DIRECTEMENT au tour suivant
+    - Les moins bons jouent les tours préliminaires
     """
+
     slots = [None] * bracket_size
-    
-    # Positions pour les têtes de série (séparées pour ne pas se rencontrer tôt)
+
+    # Positions fixes pour les seeds
     seed_positions = get_seed_slot_positions(bracket_size)
-    
-    # Placer les têtes de série
+
+    # 1. On place les seeds
     for i, team in enumerate(seeded_teams):
         seed_num = i + 1
         if seed_num in seed_positions:
-            pos = seed_positions[seed_num]
-            slots[pos] = team
-    
-    # Déterminer les positions des BYE (face aux meilleures têtes de série)
+            slots[seed_positions[seed_num]] = team
+
+    # 2. Les BYE = positions occupées par seeds sans adversaire
     bye_positions = []
-    for i in range(min(num_byes, len(seed_positions))):
+    for i in range(num_byes):
         seed_num = i + 1
         if seed_num in seed_positions:
-            seed_pos = seed_positions[seed_num]
-            # L'adversaire est dans le même match (position paire/impaire)
-            if seed_pos % 2 == 0:
-                opponent_pos = seed_pos + 1
-            else:
-                opponent_pos = seed_pos - 1
-            bye_positions.append(opponent_pos)
-    
-    # S'il reste des BYE à placer (plus que de têtes de série)
-    remaining_byes = num_byes - len(bye_positions)
-    if remaining_byes > 0:
-        # Ajouter des BYE aux positions non-TDS restantes
-        for i in range(bracket_size):
-            if remaining_byes <= 0:
-                break
-            if slots[i] is None and i not in bye_positions:
-                # Vérifier que ce n'est pas face à un BYE existant
-                opponent = i + 1 if i % 2 == 0 else i - 1
-                if opponent not in bye_positions:
-                    bye_positions.append(i)
-                    remaining_byes -= 1
-    
-    # Placer les équipes non-têtes de série dans les positions restantes
-    unseeded_idx = 0
+            bye_positions.append(seed_positions[seed_num])
+
+    # 3. Tous les autres jouent (unseeded + seeds non protégés)
+    remaining_teams = seeded_teams[num_byes:] + unseeded_teams
+    random.shuffle(remaining_teams)
+
+    idx = 0
     for i in range(bracket_size):
         if slots[i] is None and i not in bye_positions:
-            if unseeded_idx < len(unseeded_teams):
-                slots[i] = unseeded_teams[unseeded_idx]
-                unseeded_idx += 1
-    
-    # Les positions bye_positions restent None (= BYE)
-    
-    return slots
+            if idx < len(remaining_teams):
+                slots[i] = remaining_teams[idx]
+                idx += 1
 
+    return slots
 
 def get_seed_slot_positions(bracket_size):
     """
