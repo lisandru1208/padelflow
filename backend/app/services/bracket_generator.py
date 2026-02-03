@@ -265,10 +265,10 @@ def generate_bracket(db, tournament_id: str, court_ids: list = None):
         db.commit()
 
     # ============================================
-    # MATCHS DE CLASSEMENT - VERSION CORRIGÉE
+    # MATCHS DE CLASSEMENT
     # ============================================
     
-    create_classification_matches(db, tournament_id, round_count, bracket_size, num_teams, stored_court_ids)
+    create_classification_matches(db, tournament_id, round_count, bracket_size, stored_court_ids)
 
     return {
         "success": True,
@@ -394,23 +394,20 @@ def get_seed_slot_positions(bracket_size):
         return {1: 0, 2: bracket_size - 1}
 
 
-def create_classification_matches(db, tournament_id: str, round_count: int, bracket_size: int, num_teams: int, court_ids: list = None):
+def create_classification_matches(db, tournament_id: str, round_count: int, bracket_size: int, court_ids: list = None):
     """
-    Crée les matchs de classement (3ème place, 5ème place, etc.) de manière dynamique.
+    Crée les matchs de classement (3ème place, 5ème place, etc.)
     
-    Organisation dynamique basée sur le nombre réel d'équipes :
-    - À chaque round, on a des perdants qui doivent être classés
-    - On crée des matchs de classement pour tous ces perdants
-    
-    Exemple avec 20 équipes (bracket_size=32, 12 BYE) :
-    - Round 1 (16èmes) : 10 perdants réels (20 équipes jouent, pas de BYE perdants)
-    - Round 2 (8èmes) : 8 perdants
-    - Round 3 (quarts) : 4 perdants
-    - Round 4 (demis) : 2 perdants
-    - Finale : 1 perdant (2ème place)
+    Organisation:
+    - order 100: Match 3ème place (perdants demi-finales)
+    - order 101: Demi-finales 5-8ème (perdants quarts)
+    - order 102: Match 5ème place
+    - order 103: Match 7ème place
+    - order 104: Demi-finales 9-12ème (perdants huitièmes)
+    - order 105: Match 9ème place
+    - order 106: Match 11ème place
     """
     court_idx = 0
-    base_order = 100  # Commence à 100 pour les matchs de classement
     
     def get_next_court():
         nonlocal court_idx
@@ -420,66 +417,16 @@ def create_classification_matches(db, tournament_id: str, round_count: int, brac
             return court_id
         return None
     
-    def get_classification_name(rank: int) -> str:
-        """Retourne le nom du round de classement"""
-        if rank == 3:
-            return "Match 3ème place"
-        elif rank == 5:
-            return "Match 5ème place"
-        elif rank == 7:
-            return "Match 7ème place"
-        elif rank == 9:
-            return "Match 9ème place"
-        elif rank == 11:
-            return "Match 11ème place"
-        elif rank == 13:
-            return "Match 13ème place"
-        elif rank == 15:
-            return "Match 15ème place"
-        else:
-            return f"Match {rank}ème place"
-    
-    print(f"\n=== GÉNÉRATION MATCHS DE CLASSEMENT ===")
-    print(f"Nombre d'équipes réelles: {num_teams}")
-    print(f"Bracket size: {bracket_size}")
-    print(f"Rounds: {round_count}")
-    
-    # Calculer le nombre de perdants à chaque round
-    # Round 1 : tous les matchs réels (pas les BYE) produisent des perdants
-    # Rounds suivants : la moitié des équipes restantes perdent
-    
-    # Calculer combien d'équipes réelles participent à chaque round
-    teams_per_round = []
-    current_teams = num_teams
-    
-    for round_idx in range(round_count):
-        # Au premier round, on a toutes les équipes
-        if round_idx == 0:
-            teams_per_round.append(num_teams)
-        else:
-            # Aux rounds suivants, on a les gagnants du round précédent
-            current_teams = current_teams // 2
-            teams_per_round.append(current_teams)
-    
-    print(f"Équipes par round: {teams_per_round}")
-    
-    # Créer les matchs de classement pour chaque niveau
-    # On commence par les demi-finales (round_count - 2) pour la 3ème place
-    
-    current_order = base_order
-    
-    # Match 3ème place (perdants des demi-finales)
-    if round_count >= 2 and teams_per_round[round_count - 2] >= 4:
-        print(f"\nCréation match 3ème place (perdants demi-finales)")
+    if round_count >= 2:
+        # Match pour la 3ème place (perdants des demi-finales)
         r_3rd = Round(
             tournament_id=tournament_id,
             name="Match 3ème place",
-            order=current_order
+            order=100
         )
         db.add(r_3rd)
         db.commit()
         db.refresh(r_3rd)
-        current_order += 1
         
         match_3rd = Match(
             round_id=r_3rd.id,
@@ -491,103 +438,203 @@ def create_classification_matches(db, tournament_id: str, round_count: int, brac
             court_id=get_next_court()
         )
         db.add(match_3rd)
-        db.commit()
     
-    # Pour chaque round (sauf les 2 derniers qui sont gérés séparément)
-    # Créer les matchs de classement pour les perdants
-    for round_idx in range(round_count - 2, 0, -1):
-        # Calculer le rang de départ pour ce niveau
-        # Round 2 (quarts) -> 5ème-8ème place
-        # Round 1 (8èmes) -> 9ème-16ème place
-        # etc.
-        
-        teams_at_this_round = teams_per_round[round_idx]
-        losers_count = teams_at_this_round // 2  # Nombre de perdants
-        
-        # Ignorer si moins de 2 perdants
-        if losers_count < 2:
-            continue
-        
-        # Le rang de départ est basé sur le nombre d'équipes qui ont déjà été classées
-        # Équipes classées = finaliste (1) + 3ème place (1) + rangs précédents
-        rank_start = 2 ** (round_count - round_idx) + 1
-        
-        print(f"\nRound {round_idx} : {losers_count} perdants, rang {rank_start}-{rank_start + losers_count - 1}")
-        
-        # Si plus de 2 perdants, créer des demi-finales
-        if losers_count > 2:
-            # Demi-finales pour ce niveau
-            r_semi = Round(
-                tournament_id=tournament_id,
-                name=f"Demi-finales {rank_start}-{rank_start + losers_count - 1}ème",
-                order=current_order
-            )
-            db.add(r_semi)
-            db.commit()
-            db.refresh(r_semi)
-            current_order += 1
-            
-            # Créer losers_count // 2 matchs de demi-finale
-            num_semis = losers_count // 2
-            for i in range(num_semis):
-                match = Match(
-                    round_id=r_semi.id,
-                    match_order=i + 1,
-                    team1_id=None,
-                    team2_id=None,
-                    bracket_type='loser',
-                    classification_rank=rank_start,
-                    court_id=get_next_court()
-                )
-                db.add(match)
-            db.commit()
-        
-        # Match pour la meilleure place de ce niveau
-        r_final = Round(
+    if round_count >= 3:
+        # Demi-finales pour 5-8ème place (perdants des quarts)
+        r_5th_semi = Round(
             tournament_id=tournament_id,
-            name=get_classification_name(rank_start),
-            order=current_order
+            name="Demi-finales 5-8ème",
+            order=101
         )
-        db.add(r_final)
+        db.add(r_5th_semi)
         db.commit()
-        db.refresh(r_final)
-        current_order += 1
+        db.refresh(r_5th_semi)
         
-        match_final = Match(
-            round_id=r_final.id,
+        # 2 matchs de demi pour la 5-8ème place
+        for i in range(2):
+            match = Match(
+                round_id=r_5th_semi.id,
+                match_order=i + 1,
+                team1_id=None,
+                team2_id=None,
+                bracket_type='loser',
+                classification_rank=5,
+                court_id=get_next_court()
+            )
+            db.add(match)
+        
+        # Match pour 5ème place (vainqueurs des demis 5-8)
+        r_5th_final = Round(
+            tournament_id=tournament_id,
+            name="Match 5ème place",
+            order=102
+        )
+        db.add(r_5th_final)
+        db.commit()
+        db.refresh(r_5th_final)
+        
+        match_5th = Match(
+            round_id=r_5th_final.id,
             match_order=1,
             team1_id=None,
             team2_id=None,
             bracket_type='loser',
-            classification_rank=rank_start,
+            classification_rank=5,
             court_id=get_next_court()
         )
-        db.add(match_final)
-        db.commit()
+        db.add(match_5th)
         
-        # Si il y avait des demi-finales, créer aussi le match pour la place suivante
-        if losers_count > 2:
-            r_next = Round(
-                tournament_id=tournament_id,
-                name=get_classification_name(rank_start + 2),
-                order=current_order
-            )
-            db.add(r_next)
-            db.commit()
-            db.refresh(r_next)
-            current_order += 1
-            
-            match_next = Match(
-                round_id=r_next.id,
-                match_order=1,
+        # Match pour 7ème place (perdants des demis 5-8)
+        r_7th = Round(
+            tournament_id=tournament_id,
+            name="Match 7ème place",
+            order=103
+        )
+        db.add(r_7th)
+        db.commit()
+        db.refresh(r_7th)
+        
+        match_7th = Match(
+            round_id=r_7th.id,
+            match_order=1,
+            team1_id=None,
+            team2_id=None,
+            bracket_type='loser',
+            classification_rank=7,
+            court_id=get_next_court()
+        )
+        db.add(match_7th)
+    
+    if round_count >= 4:
+        # Demi-finales pour 9-12ème place (perdants des huitièmes)
+        r_9th_semi = Round(
+            tournament_id=tournament_id,
+            name="Demi-finales 9-12ème",
+            order=104
+        )
+        db.add(r_9th_semi)
+        db.commit()
+        db.refresh(r_9th_semi)
+        
+        # 2 matchs de demi pour la 9-12ème place
+        for i in range(2):
+            match = Match(
+                round_id=r_9th_semi.id,
+                match_order=i + 1,
                 team1_id=None,
                 team2_id=None,
                 bracket_type='loser',
-                classification_rank=rank_start + 2,
+                classification_rank=9,
                 court_id=get_next_court()
             )
-            db.add(match_next)
-            db.commit()
+            db.add(match)
+        
+        # Match pour 9ème place
+        r_9th_final = Round(
+            tournament_id=tournament_id,
+            name="Match 9ème place",
+            order=105
+        )
+        db.add(r_9th_final)
+        db.commit()
+        db.refresh(r_9th_final)
+        
+        match_9th = Match(
+            round_id=r_9th_final.id,
+            match_order=1,
+            team1_id=None,
+            team2_id=None,
+            bracket_type='loser',
+            classification_rank=9,
+            court_id=get_next_court()
+        )
+        db.add(match_9th)
+        
+        # Match pour 11ème place
+        r_11th = Round(
+            tournament_id=tournament_id,
+            name="Match 11ème place",
+            order=106
+        )
+        db.add(r_11th)
+        db.commit()
+        db.refresh(r_11th)
+        
+        match_11th = Match(
+            round_id=r_11th.id,
+            match_order=1,
+            team1_id=None,
+            team2_id=None,
+            bracket_type='loser',
+            classification_rank=11,
+            court_id=get_next_court()
+        )
+        db.add(match_11th)
     
+    if round_count >= 5:
+        # Demi-finales pour 13-16ème place (perdants des 16èmes)
+        r_13th_semi = Round(
+            tournament_id=tournament_id,
+            name="Demi-finales 13-16ème",
+            order=107
+        )
+        db.add(r_13th_semi)
+        db.commit()
+        db.refresh(r_13th_semi)
+        
+        # 2 matchs de demi pour la 13-16ème place
+        for i in range(2):
+            match = Match(
+                round_id=r_13th_semi.id,
+                match_order=i + 1,
+                team1_id=None,
+                team2_id=None,
+                bracket_type='loser',
+                classification_rank=13,
+                court_id=get_next_court()
+            )
+            db.add(match)
+        
+        # Match pour 13ème place
+        r_13th_final = Round(
+            tournament_id=tournament_id,
+            name="Match 13ème place",
+            order=108
+        )
+        db.add(r_13th_final)
+        db.commit()
+        db.refresh(r_13th_final)
+        
+        match_13th = Match(
+            round_id=r_13th_final.id,
+            match_order=1,
+            team1_id=None,
+            team2_id=None,
+            bracket_type='loser',
+            classification_rank=13,
+            court_id=get_next_court()
+        )
+        db.add(match_13th)
+        
+        # Match pour 15ème place
+        r_15th = Round(
+            tournament_id=tournament_id,
+            name="Match 15ème place",
+            order=109
+        )
+        db.add(r_15th)
+        db.commit()
+        db.refresh(r_15th)
+        
+        match_15th = Match(
+            round_id=r_15th.id,
+            match_order=1,
+            team1_id=None,
+            team2_id=None,
+            bracket_type='loser',
+            classification_rank=15,
+            court_id=get_next_court()
+        )
+        db.add(match_15th)
+
     db.commit()
-    print(f"\n=== MATCHS DE CLASSEMENT CRÉÉS ===")
