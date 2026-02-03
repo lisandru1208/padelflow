@@ -161,6 +161,53 @@ def propagate_loser(db: Session, match: Match, loser_id: str):
     # Loser va vers Order = current_round.order * 100
     target_round_order = current_round.order * 100
     
+    # LOGIQUE SPÉCIALE POUR LE ROUND 1 (Order 1)
+    # Si on est au premier tour, le tableau de classement est "condensé" (pas de BYE).
+    # Il faut donc trouver l'index "réel" du match parmi ceux joués.
+    if current_round.order == 1:
+        # Trouver tous les matchs "réels" (donc qui avaient 2 équipes) de ce round, dans l'ordre
+        real_matches = db.query(Match).filter(
+            Match.round_id == current_round.id,
+            Match.team1_id.isnot(None),
+            Match.team2_id.isnot(None)
+        ).order_by(Match.match_order).all()
+        
+        # Trouver mon index
+        try:
+            my_index = next(i for i, m in enumerate(real_matches) if m.id == match.id)
+            
+            # Calculer la destination basé sur cet index condensé
+            # Index 0,1 -> Match 1. Index 2,3 -> Match 2.
+            target_match_order = (my_index // 2) + 1
+            is_team1 = (my_index % 2 == 0)
+            
+            print(f"Propagating Main Loser (Round 1 Condensed) -> Round {target_round_order}, Match {target_match_order}")
+            
+            target_round = db.query(Round).filter(
+                Round.tournament_id == current_round.tournament_id,
+                Round.order == target_round_order
+            ).first()
+            
+            if target_round:
+                target_match = db.query(Match).filter(
+                    Match.round_id == target_round.id,
+                    Match.match_order == target_match_order
+                ).first()
+                
+                if target_match:
+                    if is_team1:
+                        target_match.team1_id = loser_id
+                    else:
+                        target_match.team2_id = loser_id
+                    db.commit()
+            return
+            
+        except StopIteration:
+            # Ne devrait pas arriver si le match actuel a produit un perdant
+            print("Erreur: Match actuel non trouvé dans les matchs réels ??")
+            return
+
+    # Logique standard pour les autres tours
     print(f"Propagating Main Loser -> Round Order {target_round_order}")
     propagate_to_round(db, current_round.tournament_id, target_round_order, match.match_order, loser_id)
 

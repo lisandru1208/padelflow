@@ -410,11 +410,37 @@ def create_classification_matches(db, tournament_id: str, round_count: int, brac
 
     # Pour chaque tour principal (sauf la finale), les perdants basculent dans un tableau de classement
     for main_round_idx in range(round_count - 1):
-        num_losers = bracket_size // (2 ** (main_round_idx + 1))
+        # Par défaut, tous les matchs du tour génèrent un perdant
+        theoretical_losers = bracket_size // (2 ** (main_round_idx + 1))
+        num_losers = theoretical_losers
+        
+        # Pour le premier tour (Order 1), on doit vérifier combien de VRAIS matchs sont joués (pas de BYE)
+        # pour ne pas générer un bracket de classement trop grand inutilement
+        if main_round_idx == 0:
+            # Récupérer le round correspondant
+            source_round = db.query(Round).filter(
+                Round.tournament_id == tournament_id,
+                Round.order == 1
+            ).first()
+            
+            if source_round:
+                # Compter les matchs qui ont 2 équipes (Team vs Team)
+                real_matches_count = db.query(Match).filter(
+                    Match.round_id == source_round.id,
+                    Match.team1_id.isnot(None),
+                    Match.team2_id.isnot(None)
+                ).count()
+                
+                # S'il y a moins de perdants réels que prévu, on adapte la taille
+                if real_matches_count < num_losers:
+                    num_losers = real_matches_count
+                    print(f"  -> Round 1 Optimization: Only {num_losers} real matches out of {theoretical_losers} slots")
+
         best_rank = (bracket_size // (2 ** main_round_idx)) // 2 + 1
         
         # Si le meilleur rang possible est déjà au-delà du nombre d'équipes, on ignore
-        if best_rank > total_teams:
+        # Ou si aucun perdant réel (cas extrême), on ignore
+        if best_rank > total_teams or num_losers < 2:
             continue
 
         print(f"Génération tableau classement pour perdants Round {main_round_idx}")
