@@ -268,7 +268,7 @@ def generate_bracket(db, tournament_id: str, court_ids: list = None):
     # MATCHS DE CLASSEMENT
     # ============================================
     
-    create_classification_matches(db, tournament_id, round_count, bracket_size, stored_court_ids)
+    create_classification_matches(db, tournament_id, round_count, bracket_size, num_teams, stored_court_ids)
 
     return {
         "success": True,
@@ -394,13 +394,9 @@ def get_seed_slot_positions(bracket_size):
         return {1: 0, 2: bracket_size - 1}
 
 
-def create_classification_matches(db, tournament_id: str, round_count: int, bracket_size: int, court_ids: list = None):
+def create_classification_matches(db, tournament_id: str, round_count: int, bracket_size: int, total_teams: int, court_ids: list = None):
     """
     Génère tous les matchs de classement pour déterminer un classement complet.
-    Pour un bracket de 16 équipes:
-    - Perdants 1/8 (8 équipes) -> Tableau 9-16
-    - Perdants 1/4 (4 équipes) -> Tableau 5-8
-    - Perdants 1/2 (2 équipes) -> Match 3ème place
     """
     court_idx = 0
     
@@ -413,19 +409,14 @@ def create_classification_matches(db, tournament_id: str, round_count: int, brac
         return None
 
     # Pour chaque tour principal (sauf la finale), les perdants basculent dans un tableau de classement
-    # Round 0 (1/16) -> Perdants jouent pour 17-32
-    # Round 1 (1/8) -> Perdants jouent pour 9-16
-    # Round 2 (1/4) -> Perdants jouent pour 5-8
-    # Round 3 (1/2) -> Perdants jouent pour 3-4
-    
-    # On itère de 0 à round_count - 2
     for main_round_idx in range(round_count - 1):
-        # Nombre de match dans ce round principal = nombre de perdants
         num_losers = bracket_size // (2 ** (main_round_idx + 1))
-        
-        # Le rang le "meilleur" que ces perdants peuvent atteindre
         best_rank = (bracket_size // (2 ** main_round_idx)) // 2 + 1
         
+        # Si le meilleur rang possible est déjà au-delà du nombre d'équipes, on ignore
+        if best_rank > total_teams:
+            continue
+
         print(f"Génération tableau classement pour perdants Round {main_round_idx}")
         print(f"Num losers: {num_losers}, Vise rang: {best_rank}")
         
@@ -435,17 +426,23 @@ def create_classification_matches(db, tournament_id: str, round_count: int, brac
             num_teams=num_losers, 
             start_rank=best_rank, 
             base_round_order=100 * (main_round_idx + 1),
-            get_court_func=get_next_court
+            get_court_func=get_next_court,
+            total_teams=total_teams
         )
     
     db.commit()
 
 
-def create_sub_bracket(db, tournament_id, num_teams, start_rank, base_round_order, get_court_func):
+
+def create_sub_bracket(db, tournament_id, num_teams, start_rank, base_round_order, get_court_func, total_teams):
     """
     Fonction récursive pour créer un arbre de classement.
     """
     if num_teams < 2:
+        return
+
+    # Si le rang de départ est au-delà du nombre d'équipes, on arrête
+    if start_rank > total_teams:
         return
 
     # Si on a 2 équipes, c'est un match sec pour une position précise
@@ -476,12 +473,16 @@ def create_sub_bracket(db, tournament_id, num_teams, start_rank, base_round_orde
 
     # Sinon, on crée un tour intermédiaire
     end_rank = start_rank + num_teams - 1
-    round_name = f"Barrages {start_rank}-{end_rank}"
+    
+    # Clamp le nom du round au nombre total d'équipes
+    display_end_rank = min(end_rank, total_teams)
+    
+    round_name = f"Barrages {start_rank}-{display_end_rank}"
     
     if num_teams == 4:
-        round_name = f"Demi-finales {start_rank}-{end_rank}"
+        round_name = f"Demi-finales {start_rank}-{display_end_rank}"
     elif num_teams == 8:
-        round_name = f"Quarts {start_rank}-{end_rank}"
+        round_name = f"Quarts {start_rank}-{display_end_rank}"
         
     r = Round(
         tournament_id=tournament_id,
@@ -517,7 +518,8 @@ def create_sub_bracket(db, tournament_id, num_teams, start_rank, base_round_orde
         num_teams=num_teams // 2,
         start_rank=start_rank,
         base_round_order=base_round_order + 10,
-        get_court_func=get_court_func
+        get_court_func=get_court_func,
+        total_teams=total_teams
     )
     
     # Branche Perdants (Lower) -> Order + 20
@@ -527,5 +529,6 @@ def create_sub_bracket(db, tournament_id, num_teams, start_rank, base_round_orde
         num_teams=num_teams // 2,
         start_rank=mid_rank + 1,
         base_round_order=base_round_order + 20,
-        get_court_func=get_court_func
+        get_court_func=get_court_func,
+        total_teams=total_teams
     )
