@@ -159,17 +159,13 @@ def propagate_loser(db: Session, match: Match, loser_id: str):
         return
     
     tournament_id = current_round.tournament_id
-    round_order = current_round.order
+    round_name = current_round.name
     
-    # Compter le nombre total de rounds winner
-    total_winner_rounds = db.query(Round).filter(
-        Round.tournament_id == tournament_id,
-        Round.order < 100
-    ).count()
+    print(f"=== PROPAGATION PERDANT ===")
+    print(f"Round: {round_name}, Match: {match.match_order}, Loser: {loser_id}")
     
-    # Demi-finales (avant-dernier round) → Match 3ème place
-    if round_order == total_winner_rounds - 1:
-        # Trouver le match de 3ème place
+    # Demi-finales → Match 3ème place
+    if round_name == "Demi-finales":
         round_3rd = db.query(Round).filter(
             Round.tournament_id == tournament_id,
             Round.name == "Match 3ème place"
@@ -182,22 +178,23 @@ def propagate_loser(db: Session, match: Match, loser_id: str):
             ).first()
             
             if match_3rd:
-                # Match 1 des demis → team1, Match 2 → team2
                 if match.match_order == 1:
                     match_3rd.team1_id = loser_id
+                    print(f"  -> Match 3ème place team1")
                 else:
                     match_3rd.team2_id = loser_id
+                    print(f"  -> Match 3ème place team2")
                 db.commit()
     
-    # Quarts de finale (2 rounds avant la finale) → Demi-finales 5-8ème
-    elif round_order == total_winner_rounds - 2:
+    # Quarts de finale → Demi-finales 5-8ème
+    elif round_name == "Quarts de finale":
         round_5th = db.query(Round).filter(
             Round.tournament_id == tournament_id,
             Round.name == "Demi-finales 5-8ème"
         ).first()
         
         if round_5th:
-            # 4 perdants des quarts → 2 matchs de demi-finale loser
+            # 4 perdants des quarts → 2 matchs
             # Match 1,2 quarts → match 1 loser
             # Match 3,4 quarts → match 2 loser
             loser_match_order = (match.match_order + 1) // 2
@@ -210,25 +207,27 @@ def propagate_loser(db: Session, match: Match, loser_id: str):
             if loser_match:
                 if match.match_order % 2 == 1:
                     loser_match.team1_id = loser_id
+                    print(f"  -> Demi 5-8 match {loser_match_order} team1")
                 else:
                     loser_match.team2_id = loser_id
+                    print(f"  -> Demi 5-8 match {loser_match_order} team2")
                 db.commit()
     
-    # Huitièmes de finale (3 rounds avant la finale) → Demi-finales 9-12ème
-    elif round_order == total_winner_rounds - 3:
+    # Huitièmes de finale → Demi-finales 9-12ème
+    elif round_name == "Huitièmes de finale":
         round_9th = db.query(Round).filter(
             Round.tournament_id == tournament_id,
             Round.name == "Demi-finales 9-12ème"
         ).first()
         
         if round_9th:
-            # 8 perdants des huitièmes → 4 matchs, mais on groupe par 2
-            # Match 1,2 → match 1 loser
-            # Match 3,4 → match 2 loser
-            # etc.
-            loser_match_order = (match.match_order + 1) // 2
-            # On n'a que 2 matchs dans les demi 9-12, donc on prend modulo 2
-            loser_match_order = ((loser_match_order - 1) % 2) + 1
+            # 8 perdants des huitièmes → 2 matchs (on prend les 4 premiers perdants)
+            # Match 1,2,3,4 huitièmes → match 1 loser (team1 pour impair, team2 pour pair)
+            # Match 5,6,7,8 huitièmes → match 2 loser
+            if match.match_order <= 4:
+                loser_match_order = 1
+            else:
+                loser_match_order = 2
             
             loser_match = db.query(Match).filter(
                 Match.round_id == round_9th.id,
@@ -236,10 +235,13 @@ def propagate_loser(db: Session, match: Match, loser_id: str):
             ).first()
             
             if loser_match:
+                # Alterner team1/team2 selon match_order
                 if match.match_order % 2 == 1:
                     loser_match.team1_id = loser_id
+                    print(f"  -> Demi 9-12 match {loser_match_order} team1")
                 else:
                     loser_match.team2_id = loser_id
+                    print(f"  -> Demi 9-12 match {loser_match_order} team2")
                 db.commit()
 
 
