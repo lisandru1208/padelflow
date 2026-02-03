@@ -134,23 +134,32 @@ export default function TournamentDetailScreen() {
           }
         }
         
-        // Vérifier si des poules existent
+        // Vérifier si des poules existent (seulement si bracket généré)
         if (tournamentData.bracket_generated) {
           try {
             const poolsData = await getPools(token, id);
+            console.log('=== DEBUG POOLS ===');
+            console.log('poolsData:', JSON.stringify(poolsData));
+            console.log('typeof poolsData:', typeof poolsData);
+            console.log('Array.isArray:', Array.isArray(poolsData));
+            console.log('length:', poolsData?.length);
+            
+            // Vérifier explicitement qu'on a un tableau non vide avec au moins une poule
             const hasPoolsResult = poolsData && Array.isArray(poolsData) && poolsData.length > 0;
-            console.log('Pools check:', poolsData, 'hasPools:', hasPoolsResult);
+            console.log('hasPoolsResult:', hasPoolsResult);
             setHasPools(hasPoolsResult);
           } catch (e) {
-            console.log('Pas de poules:', e);
+            console.log('Erreur getPools (pas de poules):', e);
             setHasPools(false);
           }
         } else {
+          console.log('Bracket pas encore généré, hasPools = false');
           setHasPools(false);
         }
       } catch (e) {
         console.log('Pas d\'équipes ou erreur:', e);
         setTeams([]);
+        setHasPools(false);
       }
     } catch (e: any) {
       console.error('Erreur:', e);
@@ -350,6 +359,7 @@ export default function TournamentDetailScreen() {
             try {
               await generateBracket(token, id, selectedCourts);
               setShowFormatModal(false);
+              setHasPools(false); // Bracket direct = pas de poules
               fetchData();
               Alert.alert('Succès', 'Bracket généré avec succès !', [
                 {
@@ -375,6 +385,7 @@ export default function TournamentDetailScreen() {
     try {
       await generatePools(token, id, selectedCourts);
       setShowFormatModal(false);
+      setHasPools(true); // Poules générées
       fetchData();
       Alert.alert('Succès', 'Poules générées avec succès !', [
         {

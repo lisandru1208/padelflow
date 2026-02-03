@@ -15,6 +15,7 @@ from app.models.player import Player
 from app.models.tournament import Tournament
 from app.models.club_user import ClubUser
 from app.models.court import Court
+from app.models.pool_tournament import Pool, PoolMatch, PoolTeam
 
 router = APIRouter(
     prefix="/tournaments/{tournament_id}",
@@ -57,6 +58,14 @@ def generate(
     court_ids = payload.court_ids if payload and payload.court_ids else []
     if court_ids:
         tournament.selected_court_ids = json.dumps(court_ids)
+    
+    # IMPORTANT: Supprimer les poules existantes avant de générer le bracket
+    existing_pools = db.query(Pool).filter(Pool.tournament_id == tournament_id).all()
+    for pool in existing_pools:
+        db.query(PoolMatch).filter(PoolMatch.pool_id == pool.id).delete()
+        db.query(PoolTeam).filter(PoolTeam.pool_id == pool.id).delete()
+    db.query(Pool).filter(Pool.tournament_id == tournament_id).delete()
+    db.commit()
     
     # Passer les court_ids au générateur pour assigner les terrains
     result = generate_bracket(db, tournament_id, court_ids)
