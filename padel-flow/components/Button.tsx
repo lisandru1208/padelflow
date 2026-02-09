@@ -10,6 +10,7 @@ import {
   ViewStyle,
   TextStyle,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, FontSizes, BorderRadius } from '../constants/theme';
 
 interface ButtonProps {
@@ -21,6 +22,7 @@ interface ButtonProps {
   loading?: boolean;
   style?: ViewStyle;
   textStyle?: TextStyle;
+  leftIcon?: string;
 }
 
 export default function Button({
@@ -32,6 +34,7 @@ export default function Button({
   loading = false,
   style,
   textStyle,
+  leftIcon,
 }: ButtonProps) {
   const getButtonStyle = (): ViewStyle[] => {
     const styles: ViewStyle[] = [baseStyles.button, baseStyles[size]];
@@ -83,7 +86,17 @@ export default function Button({
           size="small"
         />
       ) : (
-        <Text style={[...getTextStyle(), textStyle]}>{title}</Text>
+        <>
+          {leftIcon && (
+            <Ionicons
+              name={leftIcon as any}
+              size={20}
+              color={variant === 'outline' ? Colors.primary : Colors.textInverse}
+              style={{ marginRight: Spacing.xs }}
+            />
+          )}
+          <Text style={[...getTextStyle(), textStyle]}>{title}</Text>
+        </>
       )}
     </TouchableOpacity>
   );

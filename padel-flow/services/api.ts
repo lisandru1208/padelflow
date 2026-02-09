@@ -1,7 +1,7 @@
 // services/api.ts
 // Configuration de l'API et fonctions d'appel
 
-const API_BASE_URL = 'http://ec2-3-250-200-34.eu-west-1.compute.amazonaws.com:8000';
+const API_BASE_URL = 'https://api.padelflow.abrdns.com';
 
 // Type pour les erreurs API
 export class ApiError extends Error {

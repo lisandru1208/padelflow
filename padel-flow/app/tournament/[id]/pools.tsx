@@ -42,6 +42,7 @@ export default function PoolsScreen() {
   const [scores, setScores] = useState({ set1: ['', ''], set2: ['', ''], set3: ['', ''] });
   const [winnerId, setWinnerId] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showPreviewModal, setShowPreviewModal] = useState(false);
 
   const fetchData = async () => {
     if (!token || !id) return;
@@ -231,7 +232,7 @@ export default function PoolsScreen() {
               <Ionicons name="arrow-back" size={24} color={Colors.textInverse} />
             </TouchableOpacity>
             <Text style={styles.headerTitle}>Poules</Text>
-            <TouchableOpacity 
+            <TouchableOpacity
               onPress={() => router.push(`/tournament/${id}/bracket?clubId=${clubId}`)}
               style={styles.headerButton}
             >
@@ -241,6 +242,14 @@ export default function PoolsScreen() {
 
           {/* Onglets des poules */}
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.poolTabs}>
+            <TouchableOpacity
+              style={[styles.poolTab, activePoolIndex === -1 && styles.poolTabActive]}
+              onPress={() => setActivePoolIndex(-1)}
+            >
+              <Text style={[styles.poolTabText, activePoolIndex === -1 && styles.poolTabTextActive]}>
+                Passages
+              </Text>
+            </TouchableOpacity>
             {pools.map((pool, index) => (
               <TouchableOpacity
                 key={pool.id}
@@ -265,127 +274,224 @@ export default function PoolsScreen() {
             <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} colors={[Colors.primary]} />
           }
         >
-          {/* Classement de la poule */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Classement</Text>
-            <View style={styles.standingsTable}>
-              {/* Header */}
-              <View style={styles.standingsHeader}>
-                <Text style={[styles.standingsCell, styles.standingsCellRank]}>#</Text>
-                <Text style={[styles.standingsCell, styles.standingsCellTeam]}>Équipe</Text>
-                <Text style={[styles.standingsCell, styles.standingsCellStat]}>J</Text>
-                <Text style={[styles.standingsCell, styles.standingsCellStat]}>G</Text>
-                <Text style={[styles.standingsCell, styles.standingsCellStat]}>P</Text>
-                <Text style={[styles.standingsCell, styles.standingsCellStat]}>Sets</Text>
-                <Text style={[styles.standingsCell, styles.standingsCellPts]}>Pts</Text>
-              </View>
-              
-              {/* Rows */}
-              {activePool.teams.map((team, index) => (
-                <View 
-                  key={team.team_id} 
-                  style={[
-                    styles.standingsRow,
-                    index < 2 && styles.standingsRowQualified
-                  ]}
-                >
-                  <Text style={[styles.standingsCell, styles.standingsCellRank]}>
-                    {team.rank}
-                  </Text>
-                  <View style={[styles.standingsCell, styles.standingsCellTeam]}>
-                    <Text style={styles.standingsTeamName} numberOfLines={1}>
-                      {team.players.length >= 2 
-                        ? `${team.players[0].last_name} / ${team.players[1].last_name}`
-                        : 'Équipe'}
-                    </Text>
-                    {team.is_seeded && (
-                      <Ionicons name="star" size={12} color={Colors.accent} />
-                    )}
-                  </View>
-                  <Text style={[styles.standingsCell, styles.standingsCellStat]}>
-                    {team.stats.matches_played}
-                  </Text>
-                  <Text style={[styles.standingsCell, styles.standingsCellStat, styles.statWin]}>
-                    {team.stats.matches_won}
-                  </Text>
-                  <Text style={[styles.standingsCell, styles.standingsCellStat, styles.statLoss]}>
-                    {team.stats.matches_lost}
-                  </Text>
-                  <Text style={[styles.standingsCell, styles.standingsCellStat]}>
-                    {team.stats.sets_won}-{team.stats.sets_lost}
-                  </Text>
-                  <Text style={[styles.standingsCell, styles.standingsCellPts, styles.standingsPts]}>
-                    {team.stats.points}
-                  </Text>
-                </View>
-              ))}
-            </View>
-            
-            <View style={styles.legendContainer}>
-              <View style={styles.legendItem}>
-                <View style={[styles.legendDot, { backgroundColor: Colors.successLight }]} />
-                <Text style={styles.legendText}>Qualifié pour la phase finale</Text>
-              </View>
-            </View>
-          </View>
+          {activePoolIndex === -1 ? (
+            // Vue Passages
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Tous les Matchs</Text>
+              {(() => {
+                // Agréger tous les matchs
+                const allMatches = pools.flatMap(p =>
+                  p.matches.map(m => ({ ...m, poolName: p.name }))
+                );
 
-          {/* Matchs de la poule */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Matchs</Text>
-            {activePool.matches.map((match) => (
-              <TouchableOpacity
-                key={match.id}
-                style={[
-                  styles.matchCard,
-                  match.is_finished && styles.matchCardFinished
-                ]}
-                onPress={() => openScoreModal(match)}
-                disabled={match.is_finished}
-              >
-                <View style={styles.matchTeams}>
-                  <View style={styles.matchTeamRow}>
-                    <Text style={[
-                      styles.matchTeamName,
-                      match.winner_id === match.team1_id && styles.matchTeamWinner
-                    ]}>
-                      {getTeamName(match.team1)}
-                    </Text>
-                    {match.winner_id === match.team1_id && (
-                      <Ionicons name="checkmark-circle" size={18} color={Colors.success} />
-                    )}
-                  </View>
-                  <View style={styles.matchTeamRow}>
-                    <Text style={[
-                      styles.matchTeamName,
-                      match.winner_id === match.team2_id && styles.matchTeamWinner
-                    ]}>
-                      {getTeamName(match.team2)}
-                    </Text>
-                    {match.winner_id === match.team2_id && (
-                      <Ionicons name="checkmark-circle" size={18} color={Colors.success} />
-                    )}
-                  </View>
-                </View>
+                // Trier: 
+                // 1. En cours (Running)
+                // 2. À venir (Waiting) avec court assigné
+                // 3. À venir (Waiting) sans court
+                // 4. Terminés (Finished)
 
-                <View style={styles.matchInfo}>
-                  {match.is_finished ? (
-                    <Text style={styles.matchScore}>{match.score}</Text>
-                  ) : (
-                    <Text style={styles.matchPending}>À jouer</Text>
-                  )}
-                  {match.court && (
-                    <View style={styles.matchCourt}>
-                      <Ionicons name="location" size={12} color={Colors.textSecondary} />
-                      <Text style={styles.matchCourtText}>{match.court.name}</Text>
+                // Pour les pools, on n'a pas de "status" explicite comme dans le bracket avec "Running".
+                // On va déduire:
+                // - Running = Pas fini + 1 set commencé (score non vide) OU juste court assigné ? 
+                //   Simplification: Si court assigné et pas fini = Running/Waiting sur le terrain.
+
+                allMatches.sort((a, b) => {
+                  if (a.is_finished !== b.is_finished) return a.is_finished ? 1 : -1;
+                  if (a.court && !b.court) return -1;
+                  if (!a.court && b.court) return 1;
+                  // Si les deux ont un court, trier par court name
+                  if (a.court && b.court) {
+                    if (a.court.name !== b.court.name) return a.court.name.localeCompare(b.court.name);
+                  }
+                  // Sinon par ordre chronologique global (approximatif avec match_order mais pas garanti entre poules)
+                  // On utilise match_order + pool_order ?
+                  return a.id.localeCompare(b.id); // Fallback stable
+                });
+
+                return allMatches.map((match) => (
+                  <TouchableOpacity
+                    key={match.id}
+                    style={[
+                      styles.matchCard,
+                      match.is_finished && styles.matchCardFinished,
+                      !match.is_finished && match.court && { borderLeftColor: Colors.primary }
+                    ]}
+                    onPress={() => openScoreModal(match)}
+                    disabled={match.is_finished}
+                  >
+                    <View style={styles.matchTeams}>
+                      <Text style={styles.poolBadge}>{match.poolName}</Text>
+                      <View style={styles.matchTeamRow}>
+                        <Text style={[
+                          styles.matchTeamName,
+                          match.winner_id === match.team1_id && styles.matchTeamWinner
+                        ]}>
+                          {getTeamName(match.team1)}
+                        </Text>
+                        {match.winner_id === match.team1_id && (
+                          <Ionicons name="checkmark-circle" size={18} color={Colors.success} />
+                        )}
+                      </View>
+                      <View style={styles.matchTeamRow}>
+                        <Text style={[
+                          styles.matchTeamName,
+                          match.winner_id === match.team2_id && styles.matchTeamWinner
+                        ]}>
+                          {getTeamName(match.team2)}
+                        </Text>
+                        {match.winner_id === match.team2_id && (
+                          <Ionicons name="checkmark-circle" size={18} color={Colors.success} />
+                        )}
+                      </View>
                     </View>
-                  )}
-                </View>
-              </TouchableOpacity>
-            ))}
-          </View>
 
-          {/* Bouton phase finale */}
-          {checkAllPoolsFinished() && (
+                    <View style={styles.matchInfo}>
+                      {match.is_finished ? (
+                        <Text style={styles.matchScore}>{match.score}</Text>
+                      ) : (
+                        <Text style={[styles.matchPending, match.court && { color: Colors.primary }]}>
+                          {match.court ? 'En cours' : 'À jouer'}
+                        </Text>
+                      )}
+                      {match.court && (
+                        <View style={styles.matchCourt}>
+                          <Ionicons name="location" size={12} color={Colors.textSecondary} />
+                          <Text style={[styles.matchCourtText, !match.is_finished && { fontWeight: 'bold', color: Colors.primary }]}>
+                            {match.court.name}
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+                  </TouchableOpacity>
+                ));
+              })()}
+            </View>
+          ) : (
+            // Vue Poule spécifique
+            <>
+              {/* Classement de la poule */}
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Classement</Text>
+                <View style={styles.standingsTable}>
+                  {/* Header */}
+                  <View style={styles.standingsHeader}>
+                    <Text style={[styles.standingsCell, styles.standingsCellRank]}>#</Text>
+                    <Text style={[styles.standingsCell, styles.standingsCellTeam]}>Équipe</Text>
+                    <Text style={[styles.standingsCell, styles.standingsCellStat]}>J</Text>
+                    <Text style={[styles.standingsCell, styles.standingsCellStat]}>G</Text>
+                    <Text style={[styles.standingsCell, styles.standingsCellStat]}>P</Text>
+                    <Text style={[styles.standingsCell, styles.standingsCellStat]}>Sets</Text>
+                    <Text style={[styles.standingsCell, styles.standingsCellPts]}>Pts</Text>
+                  </View>
+
+                  {/* Rows */}
+                  {activePool.teams.map((team, index) => (
+                    <View
+                      key={team.team_id}
+                      style={[
+                        styles.standingsRow,
+                        index < 2 && styles.standingsRowQualified
+                      ]}
+                    >
+                      <Text style={[styles.standingsCell, styles.standingsCellRank]}>
+                        {team.rank}
+                      </Text>
+                      <View style={[styles.standingsCell, styles.standingsCellTeam]}>
+                        <Text style={styles.standingsTeamName} numberOfLines={1}>
+                          {team.players.length >= 2
+                            ? `${team.players[0].last_name} / ${team.players[1].last_name}`
+                            : 'Équipe'}
+                        </Text>
+                        {team.is_seeded && (
+                          <Ionicons name="star" size={12} color={Colors.accent} />
+                        )}
+                      </View>
+                      <Text style={[styles.standingsCell, styles.standingsCellStat]}>
+                        {team.stats.matches_played}
+                      </Text>
+                      <Text style={[styles.standingsCell, styles.standingsCellStat, styles.statWin]}>
+                        {team.stats.matches_won}
+                      </Text>
+                      <Text style={[styles.standingsCell, styles.standingsCellStat, styles.statLoss]}>
+                        {team.stats.matches_lost}
+                      </Text>
+                      <Text style={[styles.standingsCell, styles.standingsCellStat]}>
+                        {team.stats.sets_won}-{team.stats.sets_lost}
+                      </Text>
+                      <Text style={[styles.standingsCell, styles.standingsCellPts, styles.standingsPts]}>
+                        {team.stats.points}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+
+                <View style={styles.legendContainer}>
+                  <View style={styles.legendItem}>
+                    <View style={[styles.legendDot, { backgroundColor: Colors.successLight }]} />
+                    <Text style={styles.legendText}>Qualifié pour la phase finale</Text>
+                  </View>
+                </View>
+              </View>
+
+              {/* Matchs de la poule */}
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Matchs</Text>
+                {activePool.matches.map((match) => (
+                  <TouchableOpacity
+                    key={match.id}
+                    style={[
+                      styles.matchCard,
+                      match.is_finished && styles.matchCardFinished
+                    ]}
+                    onPress={() => openScoreModal(match)}
+                    disabled={match.is_finished}
+                  >
+                    <View style={styles.matchTeams}>
+                      <View style={styles.matchTeamRow}>
+                        <Text style={[
+                          styles.matchTeamName,
+                          match.winner_id === match.team1_id && styles.matchTeamWinner
+                        ]}>
+                          {getTeamName(match.team1)}
+                        </Text>
+                        {match.winner_id === match.team1_id && (
+                          <Ionicons name="checkmark-circle" size={18} color={Colors.success} />
+                        )}
+                      </View>
+                      <View style={styles.matchTeamRow}>
+                        <Text style={[
+                          styles.matchTeamName,
+                          match.winner_id === match.team2_id && styles.matchTeamWinner
+                        ]}>
+                          {getTeamName(match.team2)}
+                        </Text>
+                        {match.winner_id === match.team2_id && (
+                          <Ionicons name="checkmark-circle" size={18} color={Colors.success} />
+                        )}
+                      </View>
+                    </View>
+
+                    <View style={styles.matchInfo}>
+                      {match.is_finished ? (
+                        <Text style={styles.matchScore}>{match.score}</Text>
+                      ) : (
+                        <Text style={styles.matchPending}>À jouer</Text>
+                      )}
+                      {match.court && (
+                        <View style={styles.matchCourt}>
+                          <Ionicons name="location" size={12} color={Colors.textSecondary} />
+                          <Text style={styles.matchCourtText}>{match.court.name}</Text>
+                        </View>
+                      )}
+                    </View>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </>
+          )}
+
+          {/* Bouton phase finale (Visible seulement si tout fini) */}
+          {activePoolIndex !== -1 && checkAllPoolsFinished() && (
             <View style={styles.section}>
               <Button
                 title="Générer la phase finale"
@@ -695,6 +801,18 @@ const styles = StyleSheet.create({
   matchTeamName: {
     fontSize: FontSizes.md,
     color: Colors.text,
+  },
+  poolBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: Colors.primary + '20',
+    color: Colors.primary,
+    fontSize: FontSizes.xs,
+    fontWeight: 'bold',
+    paddingHorizontal: Spacing.xs,
+    paddingVertical: 2,
+    borderRadius: 4,
+    marginBottom: Spacing.xs,
+    overflow: 'hidden',
   },
   matchTeamWinner: {
     fontWeight: 'bold',
