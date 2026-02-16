@@ -79,15 +79,15 @@ Le projet suit une architecture moderne en trois couches :
 ## 🛠 Technologies
 
 ### Frontend
-- **Framework** : React avec TypeScript
+- **Framework** : React native avec TypeScript
 - **Build** : Vite
-- **Styling** : CSS Modules / Tailwind CSS
+- **Styling** : CSS Modules
 - **State Management** : React Context / Redux (à confirmer)
 
 ### Backend
 - **Framework** : FastAPI (Python)
-- **Base de données** : PostgreSQL / MongoDB (à confirmer)
-- **ORM** : SQLAlchemy / Prisma (à confirmer)
+- **Base de données** : PostgreSQL 
+- **ORM** : SQLAlchemy 
 - **API** : RESTful
 
 ### Infrastructure
